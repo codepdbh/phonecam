@@ -1,0 +1,14 @@
+LIBRARY PhoneCamMediaSource
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE
+    PhoneCam_InitializeVirtualCamera
+    PhoneCam_StartVirtualCamera
+    PhoneCam_StopVirtualCamera
+    PhoneCam_DisposeVirtualCamera
+    PhoneCam_SetVideoFormat
+    PhoneCam_PushVideoFrame
+    PhoneCam_EnableTestPattern
+    PhoneCam_GetStatus

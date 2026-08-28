@@ -1,0 +1,22 @@
+name: discovery
+description: LAN peer discovery (UDP broadcast / mDNS) and network interface detection for PhoneCam.
+version: 1.0.0
+homepage: https://github.com/phonecam/phonecam
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_models:
+    path: ../shared_models
+  protocol:
+    path: ../protocol
+  meta: ^1.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0

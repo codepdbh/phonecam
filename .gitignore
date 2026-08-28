@@ -1,0 +1,38 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+*.lock
+
+# Android
+apps/mobile/android/.gradle/
+apps/mobile/android/local.properties
+apps/mobile/android/app/build/
+apps/mobile/android/.idea/
+*.apk
+*.aab
+
+# Windows C++ / CMake build outputs
+native/windows/virtual_camera/build/
+apps/windows/windows/flutter/ephemeral/
+apps/windows/build/
+*.obj
+*.exe
+*.exp
+*.lib
+*.pdb
+*.ilk
+*.tlog
+*.idb
+*.VC.db
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
