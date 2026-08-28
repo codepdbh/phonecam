@@ -82,7 +82,7 @@ static HRESULT RegisterComServer() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
 
-    // 2. Register in DirectShow Video Input Category so Chrome, Meet, Zoom, OBS list it immediately
+    // 2. Register in DirectShow Video Input Category
     WCHAR dshowKey[384];
     wsprintfW(dshowKey, L"Software\\Classes\\CLSID\\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\\Instance\\%s", clsidStr);
     HKEY hDshow = nullptr;
@@ -95,21 +95,6 @@ static HRESULT RegisterComServer() {
         RegSetValueExW(hDshow, L"DevicePath", 0, REG_SZ, (const BYTE*)devPath, (DWORD)((wcslen(devPath) + 1) * sizeof(wchar_t)));
         RegSetValueExW(hDshow, L"FilterData", 0, REG_BINARY, filterData, (DWORD)sizeof(filterData));
         RegCloseKey(hDshow);
-    }
-
-    // 3. Also register 32-bit WoW6432Node
-    WCHAR wowDshowKey[384];
-    wsprintfW(wowDshowKey, L"Software\\Classes\\WOW6432Node\\CLSID\\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\\Instance\\%s", clsidStr);
-    HKEY hWowDshow = nullptr;
-    res = RegCreateKeyExW(HKEY_CURRENT_USER, wowDshowKey, 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hWowDshow, nullptr);
-    if (res == ERROR_SUCCESS) {
-        const wchar_t* cameraName = L"PhoneCam Virtual Camera";
-        RegSetValueExW(hWowDshow, L"FriendlyName", 0, REG_SZ, (const BYTE*)cameraName, (DWORD)((wcslen(cameraName) + 1) * sizeof(wchar_t)));
-        RegSetValueExW(hWowDshow, L"CLSID", 0, REG_SZ, (const BYTE*)clsidStr, (DWORD)((wcslen(clsidStr) + 1) * sizeof(wchar_t)));
-        const wchar_t* devPath = L"\\\\?\\phonecam#virtualcamera#0001";
-        RegSetValueExW(hWowDshow, L"DevicePath", 0, REG_SZ, (const BYTE*)devPath, (DWORD)((wcslen(devPath) + 1) * sizeof(wchar_t)));
-        RegSetValueExW(hWowDshow, L"FilterData", 0, REG_BINARY, filterData, (DWORD)sizeof(filterData));
-        RegCloseKey(hWowDshow);
     }
 
     return S_OK;
@@ -160,7 +145,7 @@ PHONECAM_API int PhoneCam_InitializeVirtualCamera() {
     s_currentConfig.width = 1920;
     s_currentConfig.height = 1080;
     s_currentConfig.fps = 30;
-    s_currentConfig.format = PhoneCamPixelFormat::NV12;
+    s_currentConfig.format = PhoneCamPixelFormat::RGB32;
 
     try {
         s_spMediaSource = new PhoneCamMediaSource();
@@ -184,6 +169,34 @@ PHONECAM_API int PhoneCam_StartVirtualCamera() {
     }
 
     RegisterComServer();
+
+    // Register with Windows 11 Media Foundation Virtual Camera API for Windows Camera App
+    try {
+        HMODULE hMf = GetModuleHandleW(L"mfplat.dll");
+        if (!hMf) hMf = LoadLibraryW(L"mfplat.dll");
+        if (hMf) {
+            auto pfnCreateVirtualCamera = (MFCreateVirtualCameraFn)GetProcAddress(hMf, "MFCreateVirtualCamera");
+            if (pfnCreateVirtualCamera) {
+                WCHAR clsidStr[64] = { 0 };
+                StringFromGUID2(CLSID_PhoneCamMediaSource, clsidStr, 64);
+
+                HRESULT hr = pfnCreateVirtualCamera(
+                    MFVirtualCameraType_SoftwareCameraSource,
+                    MFVirtualCameraLifetime_Session,
+                    MFVirtualCameraAccess_CurrentUser,
+                    L"PhoneCam Virtual Camera",
+                    clsidStr,
+                    nullptr,
+                    0,
+                    &s_spVirtualCamera
+                );
+
+                if (SUCCEEDED(hr) && s_spVirtualCamera) {
+                    s_spVirtualCamera->Start(nullptr);
+                }
+            }
+        }
+    } catch (...) {}
 
     if (s_spMediaSource) {
         try {
@@ -275,11 +288,9 @@ PHONECAM_API int PhoneCam_PushVideoFrame(const uint8_t* pBuffer, size_t size, in
         return PHONECAM_STATUS_INVALID_PARAM;
     }
 
-    // 1. Push to cross-process shared memory for DirectShow apps (Meet, Zoom, OBS, etc.)
     uint32_t fmt = static_cast<uint32_t>(s_currentConfig.format);
     s_writerShmem.WriteFrame(s_currentConfig.width, s_currentConfig.height, s_currentConfig.fps, fmt, pBuffer, size, timestampUs);
 
-    // 2. Push to local Media Foundation Media Source
     if (s_spMediaSource) {
         int64_t timestampHns = timestampUs * 10;
         s_spMediaSource->PushFrame(pBuffer, size, timestampHns);
@@ -338,22 +349,17 @@ public:
 
         // Check if caller requests Media Foundation interfaces
         if (riid == IID_IMFMediaSource || riid == IID_IMFMediaEventGenerator || riid == IID_IMFGetService) {
-            PhoneCamMediaSource* pSource = PhoneCamMediaSource::GetGlobalInstance();
-            if (!pSource) {
-                pSource = new PhoneCamMediaSource();
-            }
+            PhoneCamMediaSource* pSource = new PhoneCamMediaSource();
             return pSource->QueryInterface(riid, ppv);
         }
 
-        // Default to DirectShow IBaseFilter (most common for Chrome / OBS / Zoom)
+        // Default to DirectShow IBaseFilter
         PhoneCamDShowFilter* pFilter = new PhoneCamDShowFilter();
         HRESULT hr = pFilter->QueryInterface(riid, ppv);
         if (SUCCEEDED(hr)) return hr;
+        delete pFilter;
 
-        PhoneCamMediaSource* pSource = PhoneCamMediaSource::GetGlobalInstance();
-        if (!pSource) {
-            pSource = new PhoneCamMediaSource();
-        }
+        PhoneCamMediaSource* pSource = new PhoneCamMediaSource();
         return pSource->QueryInterface(riid, ppv);
     }
 
@@ -364,11 +370,21 @@ private:
 };
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
-    if (IsEqualCLSID(rclsid, CLSID_PhoneCamMediaSource)) {
-        ComPtr<PhoneCamClassFactory> spFactory = new PhoneCamClassFactory();
-        return spFactory->QueryInterface(riid, ppv);
+    if (!ppv) return E_POINTER;
+    *ppv = nullptr;
+
+    if (rclsid == CLSID_PhoneCamMediaSource) {
+        PhoneCamClassFactory* pFactory = new PhoneCamClassFactory();
+        HRESULT hr = pFactory->QueryInterface(riid, ppv);
+        pFactory->Release();
+        return hr;
     }
+
     return CLASS_E_CLASSNOTAVAILABLE;
+}
+
+STDAPI DllCanUnloadNow() {
+    return S_OK;
 }
 
 STDAPI DllRegisterServer() {
@@ -377,8 +393,4 @@ STDAPI DllRegisterServer() {
 
 STDAPI DllUnregisterServer() {
     return UnregisterComServer();
-}
-
-STDAPI DllCanUnloadNow() {
-    return (s_isStarted || s_isInitialized) ? S_FALSE : S_OK;
 }
