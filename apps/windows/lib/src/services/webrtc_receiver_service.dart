@@ -118,7 +118,6 @@ class WebRtcReceiverService {
 
     _peerConnection!.onTrack = (event) async {
       if (event.track.kind == 'video') {
-        _videoTrack = event.track;
         debugPrint('[WEBRTC] Received video track: ${event.track.id}, streams count: ${event.streams.length}');
         if (_isInitialized) {
           try {
@@ -130,9 +129,6 @@ class WebRtcReceiverService {
               renderer.srcObject = remoteStream;
             }
             _hasVideoStream = true;
-            if (_isVirtualCameraActive) {
-              _startFramePump();
-            }
             if (!_videoStreamReadyController.isClosed) {
               _videoStreamReadyController.add(true);
             }
@@ -240,30 +236,6 @@ class WebRtcReceiverService {
       sendCommand(StreamCommands.createResolution(res));
   void setFps(int fps) => sendCommand(StreamCommands.createFps(fps));
 
-  MediaStreamTrack? _videoTrack;
-  Timer? _framePumpTimer;
-
-  void _startFramePump() {
-    _framePumpTimer?.cancel();
-    _framePumpTimer = Timer.periodic(const Duration(milliseconds: 33), (_) async {
-      if (_videoTrack != null && _isVirtualCameraActive) {
-        try {
-          final buffer = await _videoTrack!.captureFrame();
-          final bytes = buffer.asUint8List();
-          VirtualCameraBridge.instance.pushVideoFrame(
-            bytes,
-            DateTime.now().microsecondsSinceEpoch,
-          );
-        } catch (_) {}
-      }
-    });
-  }
-
-  void _stopFramePump() {
-    _framePumpTimer?.cancel();
-    _framePumpTimer = null;
-  }
-
   // Virtual Camera management
   bool toggleVirtualCamera(bool enable) {
     final bridge = VirtualCameraBridge.instance;
@@ -272,11 +244,7 @@ class WebRtcReceiverService {
       bridge.setVideoFormat(1920, 1080, 30, 2); // RGB32 @ 1080p
       final res = bridge.start();
       _isVirtualCameraActive = (res >= 0);
-      if (_videoTrack != null) {
-        _startFramePump();
-      }
     } else {
-      _stopFramePump();
       bridge.stop();
       _isVirtualCameraActive = false;
     }

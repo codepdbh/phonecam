@@ -594,6 +594,9 @@ void PhoneCamDShowPin::StartStreaming() {
 
 void PhoneCamDShowPin::StopStreaming() {
     m_isStreaming = false;
+    if (m_spAllocator) {
+        m_spAllocator->Decommit();
+    }
     if (m_streamThread.joinable()) {
         m_streamThread.join();
     }
