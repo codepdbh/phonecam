@@ -1,4 +1,9 @@
 #include <iostream>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <vector>
 #include <windows.h>
 #include "phonecam_ffi_exports.h"
 
@@ -21,12 +26,32 @@ int main() {
     std::cout << "[4/4] Starting Virtual Camera ('PhoneCam Virtual Camera')...\n";
     int startRes = PhoneCam_StartVirtualCamera();
     std::cout << "      Start Result: " << startRes << "\n\n";
+    if (startRes != PHONECAM_STATUS_OK) {
+        std::cout << "      HRESULT: 0x" << std::hex << PhoneCam_GetLastHResult() << std::dec << "\n";
+        std::cout << "      Stage: " << PhoneCam_GetLastErrorStage() << " (1=create, 2=start)\n";
+        PhoneCam_DisposeVirtualCamera();
+        return 1;
+    }
 
     std::cout << ">>> PhoneCam Virtual Camera is now active! <<<\n";
     std::cout << ">>> Open Zoom, MS Teams, Google Meet, OBS or Discord to verify <<<\n";
     std::cout << ">>> Press ENTER to stop and exit... <<<\n";
 
+    std::vector<uint8_t> frame(1920 * 1080 * 3 / 2, 128);
+    std::fill(frame.begin(), frame.begin() + 1920 * 1080, 90);
+    std::atomic<bool> publish{true};
+    std::thread publisher([&] {
+        while (publish) {
+            const auto timestampUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            PhoneCam_PushNV12Frame(1920, 1080, 30, frame.data(), frame.size(), timestampUs);
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+        }
+    });
+
     std::cin.get();
+    publish = false;
+    publisher.join();
 
     std::cout << "Stopping Virtual Camera...\n";
     PhoneCam_StopVirtualCamera();

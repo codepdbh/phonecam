@@ -40,6 +40,11 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 Write-Host "      [OK] PhoneCamMediaSource.dll built successfully!" -ForegroundColor Green
 
+& (Join-Path $NativeDir "build/Release/PhoneCamContractTest.exe")
+if ($LASTEXITCODE -ne 0) { throw "Media Foundation source contract test failed." }
+& (Join-Path $NativeDir "build/Release/PhoneCamFrameBrokerTest.exe")
+if ($LASTEXITCODE -ne 0) { throw "Frame broker test failed." }
+
 # 3. Test Windows Flutter Desktop App
 Write-Host "`n[3/4] Testing Flutter Windows App..." -ForegroundColor Yellow
 Push-Location (Join-Path $Root "apps/windows")

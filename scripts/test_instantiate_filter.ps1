@@ -13,7 +13,7 @@ public interface IBaseFilter {
 
 public class FilterTester {
     public static void TestInstantiate() {
-        Guid clsid = new Guid("E4D8A9F1-3142-4A2D-A483-E18F54687791");
+        Guid clsid = new Guid("E4D8A9F3-3142-4A2D-A483-E18F54687791");
         Type type = Type.GetTypeFromCLSID(clsid);
         if (type == null) {
             Console.WriteLine("[ERROR] Could not get Type for CLSID");

@@ -1,57 +1,69 @@
-# Windows 11 Media Foundation Virtual Camera Implementation
+# Windows virtual camera
 
-PhoneCam integrates directly with the modern **Windows Media Foundation Virtual Camera API** (`MFCreateVirtualCamera`), introduced in Windows 11 (Build 22000+).
+PhoneCam uses the Windows 11 Media Foundation virtual-camera API. The source is
+loaded by Windows Camera Frame Server, so its COM registration must be
+machine-wide even though the virtual camera uses `CurrentUser` access.
 
----
+## Installation
 
-## 1. Virtual Camera Registration Flow
-
-```mermaid
-sequenceDiagram
-    participant Flutter as Flutter Windows App
-    participant FFI as Dart FFI Bridge
-    participant DLL as PhoneCamMediaSource.dll
-    participant WMF as Windows Media Foundation
-    participant Client as Zoom / Meet / OBS
-
-    Flutter->>FFI: VirtualCameraBridge.start()
-    FFI->>DLL: PhoneCam_StartVirtualCamera()
-    DLL->>WMF: MFCreateVirtualCamera(SoftwareCameraSource, L"PhoneCam Virtual Camera")
-    DLL->>WMF: IMFVirtualCamera::Start()
-    Note over WMF: Windows adds "PhoneCam Virtual Camera" to system device tree
-    Client->>WMF: Enumerate MediaFrameSourceGroups
-    WMF-->>Client: "PhoneCam Virtual Camera" (Available)
-    Client->>DLL: Create IMFMediaSource & Start()
-    DLL->>Client: Deliver IMFMediaSample (NV12 1080p30)
+```powershell
+.\scripts\install_virtual_camera.ps1
 ```
 
----
+The script requests elevation, installs the versioned source at
+`%ProgramFiles%\PhoneCam\PhoneCamMediaSource_v7.dll`, registers Media Foundation
+and DirectShow with distinct CLSIDs, and refreshes Camera Frame Server. Use
+`.\scripts\uninstall_virtual_camera.ps1` for complete removal.
 
-## 2. Media Source & Stream Architecture
+During an update the installer stops both `FrameServerMonitor` and
+`FrameServer`, because either service can retain an older in-process DLL. It
+also creates `%ProgramData%\PhoneCam` with Modify access for desktop users and
+`LOCAL SERVICE`.
 
-1. **`IMFVirtualCamera`**: Registered via `MFCreateVirtualCamera` with device name **"PhoneCam Virtual Camera"** and lifetime set to `MFVirtualCameraLifetime_Session`.
-2. **`IMFMediaSource`**: Media Foundation source interface representing the live capture device (`PhoneCamMediaSource`).
-3. **`IMFMediaStream`**: Manages media type negotiation (`MFVideoFormat_NV12`, `MFVideoFormat_RGB32`, `MFVideoFormat_YUY2`), presentation descriptors, and processes `RequestSample(IUnknown* pToken)`.
-4. **`IMFSample` & `IMFMediaBuffer`**: Memory buffers wrapping incoming YUV/NV12 frame data with timestamps (`SampleTime` in 100ns HNS units) and duration (`SampleDuration`).
+## Frame path
 
----
+```text
+Android camera -> WebRTC decoder -> native flutter_webrtc video sink
+               -> I420-to-NV12 packing -> double-buffered shared broker
+               -> PhoneCamMediaSource_v7.dll in Frame Server
+               -> NV12/RGB32/YUY2 sample -> browser or desktop client
+```
 
-## 3. Pixel Format and Conversions
+Decoded planes stay in native code. The broker is the file-backed mapping
+`%ProgramData%\PhoneCam\frame-broker-v4.bin`; unlike a `Local\` named mapping,
+it is visible to both the desktop session and Windows Camera Frame Server. It
+publishes an inactive slot atomically and includes frame counters, producer
+PID, timestamps, heartbeat, strides, diagnostics and rejected-frame count.
+Consumers show animated color bars when the producer is absent or a frame is
+stale for more than two seconds.
 
-PhoneCam optimizes the video path by eliminating unnecessary color space conversions:
+## COM identities
 
-- **Primary Pipeline**: `WebRTC I420/NV12` $\to$ `Direct Memory Copy` $\to$ `IMFMediaBuffer` $\to$ `IMFMediaSample` $\to$ `Windows Media Foundation`.
-- **Secondary Formats**:
-  - `NV12`: Bi-planar Y plane followed by interleaved UV plane. Default format for maximum hardware decoder performance on Windows.
-  - `RGB32`: Uncompressed 32-bit BGRA format.
-  - `YUY2`: Interleaved YUYV 4:2:2 format.
+- Media Foundation: `{E4D8A9F1-3142-4A2D-A483-E18F54687791}`
+- DirectShow: `{E4D8A9F3-3142-4A2D-A483-E18F54687791}`
 
----
+The Media Foundation source implements `IMFActivate`, `IMFMediaSourceEx`,
+`IMFMediaStream2`, `IMFSampleAllocatorControl`, `IMFGetService`, `IKsControl`
+and their inherited interfaces. The DirectShow fallback is a separate filter
+and consumes the same broker.
 
-## 4. Standalone Test Pattern Generator (Phase 6 Verification)
+## Formats
 
-To allow testing the virtual camera before establishing phone connections:
-1. `SyntheticFrameGenerator` outputs mathematically exact 8-bar SMPTE color bars:
-   - White, Yellow, Cyan, Green, Magenta, Red, Blue, Black.
-2. An animated sync indicator moves horizontally across the bottom of the video frame at 30/60 FPS.
-3. Accessible via `PhoneCamTestRunner.exe` or `scripts/test_virtual_camera.ps1`.
+- 1280x720 at 30 FPS: NV12 and RGB32.
+- 1920x1080 at 30 FPS: NV12, RGB32 and YUY2.
+
+NV12 is canonical. Scaling and RGB32/YUY2 conversion occur only when required
+by the consumer.
+
+## Verification
+
+```powershell
+.\scripts\build_all.ps1
+.\native\windows\virtual_camera\build\Release\PhoneCamContractTest.exe
+.\native\windows\virtual_camera\build\Release\PhoneCamFrameBrokerTest.exe
+.\scripts\test_virtual_camera.ps1
+```
+
+For a full producer-to-client check, keep `PhoneCamTestRunner.exe` open in one
+terminal and run `PhoneCamCaptureTest.exe` in another. A passing result reports
+3,110,400 bytes for 1080p NV12 and the luma value published by the producer.

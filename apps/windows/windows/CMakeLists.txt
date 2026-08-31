@@ -75,6 +75,16 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
+# The virtual camera source and the WebRTC frame sink must load the exact same
+# DLL instance. Build scripts compile this target before Flutter.
+set(PHONECAM_NATIVE_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/windows/virtual_camera/build/Release/PhoneCamMediaSource_v7.dll")
+if(EXISTS "${PHONECAM_NATIVE_DLL}")
+  install(FILES "${PHONECAM_NATIVE_DLL}" DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    COMPONENT Runtime)
+endif()
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/install_virtual_camera.ps1"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

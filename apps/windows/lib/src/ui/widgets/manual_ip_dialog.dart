@@ -44,7 +44,8 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
     if (!isReachable) {
       setState(() {
         _isConnecting = false;
-        _error = 'Could not reach PhoneCam on $ip:$port. Ensure the app is open on your phone.';
+        _error =
+            'Could not reach PhoneCam on $ip:$port. Ensure the app is open on your phone.';
       });
       return;
     }
@@ -78,7 +79,7 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF58A6FF).withOpacity(0.15),
+                        color: const Color(0xFF58A6FF).withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(Icons.link_rounded,
@@ -100,7 +101,7 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                   'Connect directly to your Android device IP address (useful when mDNS/broadcast is filtered by the router).',
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withValues(alpha: 0.6),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -115,7 +116,8 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                         decoration: InputDecoration(
                           labelText: 'IP Address',
                           labelStyle: TextStyle(
-                              color: Colors.white.withOpacity(0.6)),
+                            color: Colors.white.withValues(alpha: 0.6),
+                          ),
                           filled: true,
                           fillColor: const Color(0xFF0D121B),
                           border: OutlineInputBorder(
@@ -147,7 +149,8 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                         decoration: InputDecoration(
                           labelText: 'Port',
                           labelStyle: TextStyle(
-                              color: Colors.white.withOpacity(0.6)),
+                            color: Colors.white.withValues(alpha: 0.6),
+                          ),
                           filled: true,
                           fillColor: const Color(0xFF0D121B),
                           border: OutlineInputBorder(
@@ -175,10 +178,11 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFF5252).withOpacity(0.12),
+                      color: const Color(0xFFFF5252).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                          color: const Color(0xFFFF5252).withOpacity(0.3)),
+                          color:
+                              const Color(0xFFFF5252).withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       children: [
@@ -220,16 +224,15 @@ class _ManualIpDialogState extends State<ManualIpDialog> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      onPressed:
-                          _isConnecting ? null : () => _connect(ref),
+                      onPressed: _isConnecting ? null : () => _connect(ref),
                       child: _isConnecting
                           ? const SizedBox(
                               width: 16,
                               height: 16,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(
-                                    Color(0xFF0D121B)),
+                                valueColor:
+                                    AlwaysStoppedAnimation(Color(0xFF0D121B)),
                               ),
                             )
                           : const Text(

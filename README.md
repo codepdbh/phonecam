@@ -15,7 +15,7 @@ Compatible with **Google Meet, Zoom, Microsoft Teams, Discord, OBS Studio, Teleg
 - ⚡ **Ultra Low Latency**: 20–70ms typical end-to-end latency on stable LAN via hardware-accelerated WebRTC.
 - 🔌 **Dual Transport**: Works seamlessly over **Local Wi-Fi** or **USB Cable** (via USB Tethering without requiring ADB or Developer Options).
 - 🎥 **Windows 11 Native Virtual Camera**: Uses `MFCreateVirtualCamera`, `IMFVirtualCamera`, `IMFMediaSource`, and `IMFMediaStream` without third-party drivers (no OBS/DroidCam/Iriun/NDI/ffmpeg required).
-- 🎛️ **Full Remote Control (DataChannel)**: Control phone camera zoom, tap-to-focus, exposure, torch/flash, switch between front/back/ultra-wide/telephoto lenses, and change resolutions (720p, 1080p, 1440p, 4K) from Windows.
+- 🎛️ **Remote Control (DataChannel)**: Control phone camera zoom, focus, exposure, torch, camera selection, 720p/1080p output and frame rate from Windows.
 - 📡 **Zero External Cloud / 100% Local**: Works offline without internet; local UDP discovery on port `41235` and embedded local signaling on port `41236`.
 - 🔐 **6-Digit PIN Pairing**: Security handshake with persistent authorization token store.
 - 🧪 **Standalone Test Pattern Generator**: Built-in 1080p30 SMPTE color bar generator for independent testing before streaming from a mobile device.
@@ -82,6 +82,7 @@ Run the automated build script from PowerShell:
 ### 2. Test the Virtual Camera Standalone (Phase 6 Verification)
 Before connecting a phone, verify that **`PhoneCam Virtual Camera`** appears in Windows and renders video:
 ```powershell
+.\scripts\install_virtual_camera.ps1
 .\scripts\test_virtual_camera.ps1
 ```
 Open **Windows Camera App, Google Meet, Zoom, OBS Studio, or Discord**, select **`PhoneCam Virtual Camera`**, and you will see the animated SMPTE color bars test pattern running smoothly at 1080p @ 30 FPS.

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_models/shared_models.dart';
@@ -56,7 +58,7 @@ class DevicesSidebar extends ConsumerWidget {
                         'Virtual Camera Studio',
                         style: TextStyle(
                           fontSize: 11,
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -153,7 +155,7 @@ class DevicesSidebar extends ConsumerWidget {
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.white.withOpacity(0.4),
+                              color: Colors.white.withValues(alpha: 0.4),
                             ),
                           ),
                         ],
@@ -192,30 +194,62 @@ class DevicesSidebar extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              icon: const Icon(Icons.verified_user_rounded, size: 16, color: Color(0xFF00E5FF)),
+              icon: const Icon(Icons.verified_user_rounded,
+                  size: 16, color: Color(0xFF00E5FF)),
               label: const Text(
                 'Instalar / Reparar Driver',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               ),
-              onPressed: () {
+              onPressed: () async {
                 final bridge = VirtualCameraBridge.instance;
-                bridge.initialize();
-                bridge.start();
+                var result = bridge.initialize();
+                if (result != 0 && Platform.isWindows) {
+                  final directory =
+                      File(Platform.resolvedExecutable).parent.path;
+                  final script = '$directory\\install_virtual_camera.ps1';
+                  final dll = '$directory\\PhoneCamMediaSource_v7.dll';
+                  if (File(script).existsSync() && File(dll).existsSync()) {
+                    final process = await Process.run('powershell.exe', [
+                      '-NoProfile',
+                      '-ExecutionPolicy',
+                      'Bypass',
+                      '-File',
+                      script,
+                      '-SkipBuild',
+                      '-SourceDll',
+                      dll,
+                    ]);
+                    if (process.exitCode == 0) result = bridge.initialize();
+                  }
+                }
+                if (!context.mounted) return;
+                final success = result == 0;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    backgroundColor: const Color(0xFF10B981),
+                    backgroundColor: success
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFFDC2626),
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    content: const Row(
+                    content: Row(
                       children: [
-                        Icon(Icons.check_circle_rounded, color: Colors.white),
-                        SizedBox(width: 10),
+                        Icon(
+                          success
+                              ? Icons.check_circle_rounded
+                              : Icons.error_rounded,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            '¡Driver de PhoneCam instalado y registrado con éxito!',
-                            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                            success
+                                ? 'Cámara virtual instalada y verificada correctamente.'
+                                : 'No se pudo instalar la cámara (estado $result, HRESULT 0x${bridge.lastHResult.toRadixString(16)}).',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white),
                           ),
                         ),
                       ],
@@ -277,13 +311,11 @@ class _DeviceCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isConnected
-            ? const Color(0xFF16243A)
-            : const Color(0xFF151A24),
+        color: isConnected ? const Color(0xFF16243A) : const Color(0xFF151A24),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isConnected
-              ? const Color(0xFF00E5FF).withOpacity(0.5)
+              ? const Color(0xFF00E5FF).withValues(alpha: 0.5)
               : const Color(0xFF222B3D),
           width: 1.2,
         ),
@@ -296,9 +328,7 @@ class _DeviceCard extends StatelessWidget {
               Icon(
                 Icons.smartphone_rounded,
                 size: 18,
-                color: isConnected
-                    ? const Color(0xFF00E5FF)
-                    : Colors.white70,
+                color: isConnected ? const Color(0xFF00E5FF) : Colors.white70,
               ),
               const SizedBox(width: 6),
               Expanded(
@@ -314,17 +344,16 @@ class _DeviceCard extends StatelessWidget {
               ),
               // Transport Badge
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: isUsb
-                      ? const Color(0xFF7C4DFF).withOpacity(0.2)
-                      : const Color(0xFF00E676).withOpacity(0.15),
+                      ? const Color(0xFF7C4DFF).withValues(alpha: 0.2)
+                      : const Color(0xFF00E676).withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(5),
                   border: Border.all(
                     color: isUsb
-                        ? const Color(0xFF7C4DFF).withOpacity(0.5)
-                        : const Color(0xFF00E676).withOpacity(0.5),
+                        ? const Color(0xFF7C4DFF).withValues(alpha: 0.5)
+                        : const Color(0xFF00E676).withValues(alpha: 0.5),
                   ),
                 ),
                 child: Row(
@@ -358,7 +387,7 @@ class _DeviceCard extends StatelessWidget {
             '${device.ipAddress}:${device.port}',
             style: TextStyle(
               fontSize: 11,
-              color: Colors.white.withOpacity(0.4),
+              color: Colors.white.withValues(alpha: 0.4),
               fontFamily: 'monospace',
             ),
           ),
@@ -369,7 +398,8 @@ class _DeviceCard extends StatelessWidget {
             child: isConnected
                 ? ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF5252).withOpacity(0.2),
+                      backgroundColor:
+                          const Color(0xFFFF5252).withValues(alpha: 0.2),
                       foregroundColor: const Color(0xFFFF5252),
                       elevation: 0,
                       side: const BorderSide(color: Color(0xFFFF5252)),
@@ -394,8 +424,8 @@ class _DeviceCard extends StatelessWidget {
                     icon: const Icon(Icons.link_rounded, size: 14),
                     label: const Text(
                       'Connect',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 12),
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                     ),
                     onPressed: onConnect,
                   ),

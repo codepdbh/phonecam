@@ -12,6 +12,9 @@ class PhoneCamState {
   final DeviceCapabilities? capabilities;
   final bool isVirtualCameraActive;
   final bool isVideoStreamReady;
+  final String virtualCameraError;
+  final int virtualCameraPublishedFrames;
+  final int virtualCameraRejectedFrames;
   final double currentZoom;
   final bool isTorchOn;
   final VideoResolution selectedResolution;
@@ -26,6 +29,9 @@ class PhoneCamState {
     this.capabilities,
     this.isVirtualCameraActive = false,
     this.isVideoStreamReady = false,
+    this.virtualCameraError = '',
+    this.virtualCameraPublishedFrames = 0,
+    this.virtualCameraRejectedFrames = 0,
     this.currentZoom = 1.0,
     this.isTorchOn = false,
     this.selectedResolution = VideoResolution.r1080p,
@@ -41,6 +47,9 @@ class PhoneCamState {
     DeviceCapabilities? capabilities,
     bool? isVirtualCameraActive,
     bool? isVideoStreamReady,
+    String? virtualCameraError,
+    int? virtualCameraPublishedFrames,
+    int? virtualCameraRejectedFrames,
     double? currentZoom,
     bool? isTorchOn,
     VideoResolution? selectedResolution,
@@ -56,6 +65,11 @@ class PhoneCamState {
       isVirtualCameraActive:
           isVirtualCameraActive ?? this.isVirtualCameraActive,
       isVideoStreamReady: isVideoStreamReady ?? this.isVideoStreamReady,
+      virtualCameraError: virtualCameraError ?? this.virtualCameraError,
+      virtualCameraPublishedFrames:
+          virtualCameraPublishedFrames ?? this.virtualCameraPublishedFrames,
+      virtualCameraRejectedFrames:
+          virtualCameraRejectedFrames ?? this.virtualCameraRejectedFrames,
       currentZoom: currentZoom ?? this.currentZoom,
       isTorchOn: isTorchOn ?? this.isTorchOn,
       selectedResolution: selectedResolution ?? this.selectedResolution,
@@ -67,7 +81,8 @@ class PhoneCamState {
 
 class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
   final UdpDiscoveryService _discoveryService = UdpDiscoveryService();
-  final AdbUsbDiscoveryService _adbUsbDiscoveryService = AdbUsbDiscoveryService();
+  final AdbUsbDiscoveryService _adbUsbDiscoveryService =
+      AdbUsbDiscoveryService();
   final WebRtcReceiverService receiverService = WebRtcReceiverService();
 
   StreamSubscription? _udpSub;
@@ -108,7 +123,13 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
     });
 
     _statsSub = receiverService.onStatsUpdated.listen((stats) {
-      state = state.copyWith(stats: stats);
+      state = state.copyWith(
+        stats: stats,
+        virtualCameraPublishedFrames:
+            receiverService.publishedVirtualCameraFrames,
+        virtualCameraRejectedFrames:
+            receiverService.rejectedVirtualCameraFrames,
+      );
     });
 
     _capsSub = receiverService.onCapabilitiesReceived.listen((caps) {
@@ -121,14 +142,16 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
 
   void _updateDeviceList({List<DeviceInfo>? udp, List<DeviceInfo>? usb}) {
     if (udp != null) {
-      _mergedDevices.removeWhere((_, d) => d.transportType == TransportType.wifi);
+      _mergedDevices
+          .removeWhere((_, d) => d.transportType == TransportType.wifi);
       for (final d in udp) {
         _mergedDevices[d.id] = d;
       }
     }
 
     if (usb != null) {
-      _mergedDevices.removeWhere((_, d) => d.transportType == TransportType.usbTethering);
+      _mergedDevices
+          .removeWhere((_, d) => d.transportType == TransportType.usbTethering);
       for (final d in usb) {
         _mergedDevices[d.id] = d;
       }
@@ -155,7 +178,13 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
   void toggleVirtualCamera() {
     final newState = !state.isVirtualCameraActive;
     final success = receiverService.toggleVirtualCamera(newState);
-    state = state.copyWith(isVirtualCameraActive: success);
+    state = state.copyWith(
+      isVirtualCameraActive: success,
+      virtualCameraError: receiverService.virtualCameraError,
+      virtualCameraPublishedFrames:
+          receiverService.publishedVirtualCameraFrames,
+      virtualCameraRejectedFrames: receiverService.rejectedVirtualCameraFrames,
+    );
   }
 
   void switchCamera() {

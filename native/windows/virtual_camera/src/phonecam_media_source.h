@@ -1,10 +1,16 @@
 #pragma once
 
+#include <unknwn.h>
+#include <ks.h>
+#include <ksproxy.h>
 #include "phonecam_virtual_cam.h"
 #include "phonecam_media_stream.h"
 #include <mfidl.h>
 
-class PhoneCamMediaSource : public IMFMediaSource, public IMFGetService {
+class PhoneCamMediaSource : public IMFMediaSourceEx,
+                            public IMFGetService,
+                            public IKsControl,
+                            public IMFSampleAllocatorControl {
 public:
     PhoneCamMediaSource();
     virtual ~PhoneCamMediaSource();
@@ -28,11 +34,27 @@ public:
     STDMETHODIMP Pause() override;
     STDMETHODIMP Shutdown() override;
 
+    // IMFMediaSourceEx (required by Windows Camera Frame Server)
+    STDMETHODIMP GetSourceAttributes(IMFAttributes** ppAttributes) override;
+    STDMETHODIMP GetStreamAttributes(DWORD streamIdentifier, IMFAttributes** ppAttributes) override;
+    STDMETHODIMP SetD3DManager(IUnknown* manager) override;
+
+    // IMFSampleAllocatorControl
+    STDMETHODIMP SetDefaultAllocator(DWORD outputStreamId, IUnknown* allocator) override;
+    STDMETHODIMP GetAllocatorUsage(DWORD outputStreamId, DWORD* inputStreamId,
+                                   MFSampleAllocatorUsage* usage) override;
+
     // IMFGetService
     STDMETHODIMP GetService(REFGUID guidService, REFIID riid, void** ppv) override;
 
-    // Stream frame push
-    void PushFrame(const uint8_t* pBuffer, size_t size, int64_t timestampHns);
+    // IKsControl is mandatory even when no custom controls are exposed.
+    STDMETHODIMP KsProperty(PKSPROPERTY property, ULONG propertyLength,
+                            PVOID data, ULONG dataLength, ULONG* bytesReturned) override;
+    STDMETHODIMP KsMethod(PKSMETHOD method, ULONG methodLength,
+                          PVOID data, ULONG dataLength, ULONG* bytesReturned) override;
+    STDMETHODIMP KsEvent(PKSEVENT event, ULONG eventLength,
+                         PVOID data, ULONG dataLength, ULONG* bytesReturned) override;
+
     void EnableTestPattern(bool enable);
     void SetVideoConfig(const PhoneCamVideoConfig& config);
 
@@ -49,8 +71,13 @@ private:
     ComPtr<IMFPresentationDescriptor> m_spPresentationDesc;
     ComPtr<IMFStreamDescriptor> m_spStreamDesc;
     ComPtr<PhoneCamMediaStream> m_spStream;
+    ComPtr<IMFAttributes> m_spAttributes;
+    ComPtr<IMFAttributes> m_spStreamAttributes;
+    ComPtr<IUnknown> m_spD3DManager;
+    PhoneCamSharedMemory m_diagnostics;
 
     bool m_isShutdown;
+    bool m_streamAnnounced = false;
     PhoneCamVideoConfig m_config;
 
     static PhoneCamMediaSource* s_pGlobalInstance;

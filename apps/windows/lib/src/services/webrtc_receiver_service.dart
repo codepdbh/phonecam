@@ -12,6 +12,8 @@ class WebRtcReceiverService {
   RTCDataChannel? _dataChannel;
   SignalingClient? _signalingClient;
   Timer? _statsTimer;
+  int? _lastBytesReceived;
+  DateTime? _lastStatsTimestamp;
 
   final _connectionStateController =
       StreamController<AppConnectionState>.broadcast();
@@ -38,6 +40,12 @@ class WebRtcReceiverService {
 
   bool _isVirtualCameraActive = false;
   bool get isVirtualCameraActive => _isVirtualCameraActive;
+  String _virtualCameraError = '';
+  String get virtualCameraError => _virtualCameraError;
+  int get publishedVirtualCameraFrames =>
+      VirtualCameraBridge.instance.publishedFrameCount;
+  int get rejectedVirtualCameraFrames =>
+      VirtualCameraBridge.instance.rejectedFrameCount;
 
   bool _isInitialized = false;
   bool _hasVideoStream = false;
@@ -47,6 +55,14 @@ class WebRtcReceiverService {
     if (_isInitialized) return;
     try {
       await renderer.initialize();
+      final bridge = VirtualCameraBridge.instance;
+      if (bridge.isLoaded) {
+        final result = bridge.initialize();
+        if (result != 0) {
+          debugPrint(
+              '[VIRTUAL_CAMERA] Initialization failed: status=$result hr=0x${bridge.lastHResult.toRadixString(16)}');
+        }
+      }
       _isInitialized = true;
     } catch (e) {
       debugPrint('[WEBRTC] Renderer initialize error: $e');
@@ -118,13 +134,15 @@ class WebRtcReceiverService {
 
     _peerConnection!.onTrack = (event) async {
       if (event.track.kind == 'video') {
-        debugPrint('[WEBRTC] Received video track: ${event.track.id}, streams count: ${event.streams.length}');
+        debugPrint(
+            '[WEBRTC] Received video track: ${event.track.id}, streams count: ${event.streams.length}');
         if (_isInitialized) {
           try {
             if (event.streams.isNotEmpty) {
               renderer.srcObject = event.streams.first;
             } else {
-              final remoteStream = await createLocalMediaStream('remote_stream_${DateTime.now().millisecondsSinceEpoch}');
+              final remoteStream = await createLocalMediaStream(
+                  'remote_stream_${DateTime.now().millisecondsSinceEpoch}');
               await remoteStream.addTrack(event.track);
               renderer.srcObject = remoteStream;
             }
@@ -132,7 +150,8 @@ class WebRtcReceiverService {
             if (!_videoStreamReadyController.isClosed) {
               _videoStreamReadyController.add(true);
             }
-            debugPrint('[WEBRTC] Video stream successfully attached to renderer');
+            debugPrint(
+                '[WEBRTC] Video stream successfully attached to renderer');
           } catch (e) {
             debugPrint('[WEBRTC] Error attaching video track: $e');
           }
@@ -241,12 +260,22 @@ class WebRtcReceiverService {
     final bridge = VirtualCameraBridge.instance;
     if (enable) {
       bridge.initialize();
-      bridge.setVideoFormat(1920, 1080, 30, 2); // RGB32 @ 1080p
+      // Decoded WebRTC planes are published natively as NV12. The camera
+      // source converts only when a consumer explicitly negotiates RGB32/YUY2.
+      bridge.setVideoFormat(1920, 1080, 30, 0);
       final res = bridge.start();
-      _isVirtualCameraActive = (res >= 0);
+      _isVirtualCameraActive = (res == 0);
+      _virtualCameraError = '';
+      if (!_isVirtualCameraActive) {
+        _virtualCameraError =
+            'status=$res, stage=${bridge.lastErrorStage}, HRESULT=0x${bridge.lastHResult.toRadixString(16)}';
+        debugPrint(
+            '[VIRTUAL_CAMERA] Start failed: status=$res hr=0x${bridge.lastHResult.toRadixString(16)}');
+      }
     } else {
       bridge.stop();
       _isVirtualCameraActive = false;
+      _virtualCameraError = '';
     }
     return _isVirtualCameraActive;
   }
@@ -257,29 +286,72 @@ class WebRtcReceiverService {
       if (_peerConnection == null) return;
       try {
         final stats = await _peerConnection!.getStats();
-        var bitrate = 6200.0;
-        var fps = 30.0;
-        var latency = 24;
+        var bitrate = 0.0;
+        var fps = 0.0;
+        var latency = 0;
         var lost = 0;
+        var received = 0;
+        var width = renderer.videoWidth > 0 ? renderer.videoWidth : 1920;
+        var height = renderer.videoHeight > 0 ? renderer.videoHeight : 1080;
+        var jitterMs = 0.0;
+        String? codecId;
+        var codec = VideoCodec.h264;
+        final now = DateTime.now();
 
         for (final report in stats) {
-          if (report.type == 'inbound-rtp' && report.values['kind'] == 'video') {
-            fps = (report.values['framesPerSecond'] as num?)?.toDouble() ?? 30.0;
+          if (report.type == 'inbound-rtp' &&
+              report.values['kind'] == 'video') {
+            fps = (report.values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
             lost = (report.values['packetsLost'] as num?)?.toInt() ?? 0;
+            received = (report.values['packetsReceived'] as num?)?.toInt() ?? 0;
+            width = (report.values['frameWidth'] as num?)?.toInt() ?? width;
+            height = (report.values['frameHeight'] as num?)?.toInt() ?? height;
+            jitterMs =
+                ((report.values['jitter'] as num?)?.toDouble() ?? 0) * 1000;
+            codecId = report.values['codecId'] as String?;
+            final bytes = (report.values['bytesReceived'] as num?)?.toInt();
+            if (bytes != null &&
+                _lastBytesReceived != null &&
+                _lastStatsTimestamp != null) {
+              final seconds =
+                  now.difference(_lastStatsTimestamp!).inMilliseconds / 1000;
+              if (seconds > 0) {
+                bitrate = (bytes - _lastBytesReceived!) * 8 / seconds / 1000;
+              }
+            }
+            _lastBytesReceived = bytes;
           } else if (report.type == 'candidate-pair' &&
               report.values['state'] == 'succeeded') {
-            final rtt = (report.values['currentRoundTripTime'] as num?)?.toDouble();
+            final rtt =
+                (report.values['currentRoundTripTime'] as num?)?.toDouble();
             if (rtt != null) latency = (rtt * 1000).toInt();
           }
         }
+        if (codecId != null) {
+          for (final report in stats) {
+            if (report.id == codecId && report.type == 'codec') {
+              final mimeType = report.values['mimeType'] as String?;
+              if (mimeType != null) {
+                codec = VideoCodec.fromString(mimeType.split('/').last);
+              }
+            }
+          }
+        }
+        _lastStatsTimestamp = now;
+        final totalPackets = received + lost;
+        final lossPercentage =
+            totalPackets > 0 ? lost * 100 / totalPackets : 0.0;
 
         final telemetry = ConnectionStats(
-          width: 1920,
-          height: 1080,
+          width: width,
+          height: height,
           fps: fps,
           bitrateKbps: bitrate,
           latencyMs: latency,
           lostFrames: lost,
+          packetLossPercentage: lossPercentage,
+          jitterMs: jitterMs,
+          codec: codec,
           transportType: _currentDevice?.transportType ?? TransportType.wifi,
           timestamp: DateTime.now(),
         );
@@ -294,6 +366,8 @@ class WebRtcReceiverService {
   void disconnect() {
     _statsTimer?.cancel();
     _statsTimer = null;
+    _lastBytesReceived = null;
+    _lastStatsTimestamp = null;
     _dataChannel?.close();
     _dataChannel = null;
     _peerConnection?.close();

@@ -27,8 +27,8 @@ class VideoStage extends ConsumerWidget {
                       aspectRatio: 16 / 9,
                       child: RTCVideoView(
                         notifier.receiverService.renderer,
-                        objectFit: RTCVideoViewObjectFit
-                            .RTCVideoViewObjectFitContain,
+                        objectFit:
+                            RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
                       ),
                     ),
                   )
@@ -58,8 +58,9 @@ class VideoStage extends ConsumerWidget {
   }
 
   Widget _buildIdleStage(BuildContext context, PhoneCamState state) {
-    final isConnecting = state.connectionState == AppConnectionState.connecting ||
-        state.connectionState == AppConnectionState.streaming;
+    final isConnecting =
+        state.connectionState == AppConnectionState.connecting ||
+            state.connectionState == AppConnectionState.streaming;
 
     return Container(
       width: 720,
@@ -70,7 +71,7 @@ class VideoStage extends ConsumerWidget {
         border: Border.all(color: const Color(0xFF1F283B), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.4),
+            color: Colors.black.withValues(alpha: 0.4),
             blurRadius: 24,
             offset: const Offset(0, 8),
           ),
@@ -119,7 +120,7 @@ class VideoStage extends ConsumerWidget {
                 : 'Negotiating low-latency video stream...',
             style: TextStyle(
               fontSize: 13,
-              color: Colors.white.withOpacity(0.5),
+              color: Colors.white.withValues(alpha: 0.5),
             ),
           ),
         ],
@@ -132,12 +133,12 @@ class VideoStage extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF121824).withOpacity(0.9),
+        color: const Color(0xFF121824).withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF243048)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 12,
           ),
         ],
@@ -161,9 +162,7 @@ class VideoStage extends ConsumerWidget {
               state.isTorchOn
                   ? Icons.flashlight_on_rounded
                   : Icons.flashlight_off_rounded,
-              color: state.isTorchOn
-                  ? const Color(0xFFFFD600)
-                  : Colors.white70,
+              color: state.isTorchOn ? const Color(0xFFFFD600) : Colors.white70,
             ),
             onPressed: notifier.toggleTorch,
           ),
@@ -231,7 +230,7 @@ class VideoStage extends ConsumerWidget {
         boxShadow: [
           if (isActive)
             BoxShadow(
-              color: const Color(0xFF00E676).withOpacity(0.35),
+              color: const Color(0xFF00E676).withValues(alpha: 0.35),
               blurRadius: 20,
               spreadRadius: 2,
             ),
@@ -239,27 +238,22 @@ class VideoStage extends ConsumerWidget {
       ),
       child: ElevatedButton.icon(
         style: ElevatedButton.styleFrom(
-          backgroundColor: isActive
-              ? const Color(0xFF00E676)
-              : const Color(0xFF1C2538),
-          foregroundColor:
-              isActive ? const Color(0xFF07140E) : Colors.white,
+          backgroundColor:
+              isActive ? const Color(0xFF00E676) : const Color(0xFF1C2538),
+          foregroundColor: isActive ? const Color(0xFF07140E) : Colors.white,
           elevation: 4,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(30),
             side: BorderSide(
-              color: isActive
-                  ? const Color(0xFF00E676)
-                  : const Color(0xFF334264),
+              color:
+                  isActive ? const Color(0xFF00E676) : const Color(0xFF334264),
               width: 1.5,
             ),
           ),
         ),
         icon: Icon(
-          isActive
-              ? Icons.videocam_rounded
-              : Icons.videocam_off_rounded,
+          isActive ? Icons.videocam_rounded : Icons.videocam_off_rounded,
           size: 22,
         ),
         label: Text(

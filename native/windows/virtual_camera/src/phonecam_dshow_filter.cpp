@@ -1,4 +1,5 @@
 #include "phonecam_dshow_filter.h"
+#include "phonecam_frame_converter.h"
 #include <initguid.h>
 #include <ks.h>
 #include <ksmedia.h>
@@ -118,11 +119,13 @@ PhoneCamDShowFilter::PhoneCamDShowFilter()
       m_pGraph(nullptr),
       m_pClock(nullptr),
       m_name(L"PhoneCam Virtual Camera") {
+    PhoneCamComObjectCreated();
     m_spPin = new PhoneCamDShowPin(this);
 }
 
 PhoneCamDShowFilter::~PhoneCamDShowFilter() {
     Stop();
+    PhoneCamComObjectDestroyed();
 }
 
 STDMETHODIMP PhoneCamDShowFilter::QueryInterface(REFIID riid, void** ppv) {
@@ -155,7 +158,7 @@ STDMETHODIMP_(ULONG) PhoneCamDShowFilter::Release() {
 
 STDMETHODIMP PhoneCamDShowFilter::GetClassID(CLSID* pClassID) {
     if (!pClassID) return E_POINTER;
-    *pClassID = CLSID_PhoneCamMediaSource;
+    *pClassID = CLSID_PhoneCamDShowSource;
     return S_OK;
 }
 
@@ -262,6 +265,7 @@ PhoneCamDShowPin::PhoneCamDShowPin(PhoneCamDShowFilter* pFilter)
       m_hasMediaType(false),
       m_isStreaming(false),
       m_frameIndex(0) {
+    PhoneCamComObjectCreated();
     memset(&m_currentMediaType, 0, sizeof(m_currentMediaType));
     m_shmem.Initialize(false);
     PhoneCamVideoConfig cfg;
@@ -277,6 +281,7 @@ PhoneCamDShowPin::~PhoneCamDShowPin() {
     if (m_currentMediaType.pbFormat) {
         CoTaskMemFree(m_currentMediaType.pbFormat);
     }
+    PhoneCamComObjectDestroyed();
 }
 
 STDMETHODIMP PhoneCamDShowPin::QueryInterface(REFIID riid, void** ppv) {
@@ -605,6 +610,8 @@ void PhoneCamDShowPin::StopStreaming() {
 void PhoneCamDShowPin::StreamingThreadWorker() {
     auto frameDuration = std::chrono::milliseconds(33);
     std::vector<uint8_t> frameBuffer;
+    std::vector<uint8_t> convertedBuffer;
+    std::vector<uint8_t> rgb24Buffer;
 
     while (m_isStreaming) {
         auto start = std::chrono::steady_clock::now();
@@ -641,22 +648,65 @@ void PhoneCamDShowPin::StreamingThreadWorker() {
                 pSample->GetPointer(&pData);
                 long maxLen = pSample->GetSize();
 
-                PhoneCamSharedHeader header;
+                PhoneCamVideoConfig outputConfig;
+                outputConfig.width = 1920; outputConfig.height = 1080; outputConfig.fps = 30;
+                if (m_currentMediaType.pbFormat && m_currentMediaType.cbFormat >= sizeof(VIDEOINFOHEADER)) {
+                    const auto* videoInfo = reinterpret_cast<const VIDEOINFOHEADER*>(m_currentMediaType.pbFormat);
+                    outputConfig.width = static_cast<uint32_t>(videoInfo->bmiHeader.biWidth);
+                    outputConfig.height = static_cast<uint32_t>(abs(videoInfo->bmiHeader.biHeight));
+                    outputConfig.fps = videoInfo->AvgTimePerFrame > 0
+                        ? static_cast<uint32_t>(10000000LL / videoInfo->AvgTimePerFrame) : 30;
+                }
+                const bool rgb24 = m_currentMediaType.subtype == MEDIASUBTYPE_RGB24;
+                if (m_currentMediaType.subtype == MEDIASUBTYPE_NV12)
+                    outputConfig.format = PhoneCamPixelFormat::NV12;
+                else if (m_currentMediaType.subtype == MEDIASUBTYPE_YUY2)
+                    outputConfig.format = PhoneCamPixelFormat::YUY2;
+                else
+                    outputConfig.format = PhoneCamPixelFormat::RGB32;
+
+                PhoneCamFrameMetadata header{};
                 bool hasFrame = m_shmem.ReadLatestFrame(header, frameBuffer);
 
                 if (hasFrame && !frameBuffer.empty() && pData) {
-                    size_t copySize = (std::min)((size_t)maxLen, frameBuffer.size());
-                    memcpy(pData, frameBuffer.data(), copySize);
+                    const std::vector<uint8_t>* delivered = &convertedBuffer;
+                    if (!PhoneCamConvertFrame(header, frameBuffer, outputConfig, convertedBuffer)) {
+                        convertedBuffer.clear();
+                    }
+                    if (rgb24 && !convertedBuffer.empty()) {
+                        rgb24Buffer.resize(static_cast<size_t>(outputConfig.width) * outputConfig.height * 3);
+                        for (size_t src = 0, dst = 0; src < convertedBuffer.size(); src += 4, dst += 3) {
+                            rgb24Buffer[dst] = convertedBuffer[src];
+                            rgb24Buffer[dst + 1] = convertedBuffer[src + 1];
+                            rgb24Buffer[dst + 2] = convertedBuffer[src + 2];
+                        }
+                        delivered = &rgb24Buffer;
+                    }
+                    size_t copySize = (std::min)((size_t)maxLen, delivered->size());
+                    memcpy(pData, delivered->data(), copySize);
                     pSample->SetActualDataLength((long)copySize);
                 } else if (pData) {
                     // Generate synthetic test pattern if not streaming
-                    m_syntheticGenerator.GenerateNextFrame(frameBuffer, m_frameIndex++);
-                    size_t copySize = (std::min)((size_t)maxLen, frameBuffer.size());
-                    memcpy(pData, frameBuffer.data(), copySize);
+                    PhoneCamVideoConfig patternConfig = outputConfig;
+                    if (patternConfig.format == PhoneCamPixelFormat::YUY2)
+                        patternConfig.format = PhoneCamPixelFormat::RGB32;
+                    m_syntheticGenerator.Configure(patternConfig);
+                    m_syntheticGenerator.GenerateNextFrame(convertedBuffer, m_frameIndex);
+                    const std::vector<uint8_t>* delivered = &convertedBuffer;
+                    if (rgb24) {
+                        rgb24Buffer.resize(static_cast<size_t>(outputConfig.width) * outputConfig.height * 3);
+                        for (size_t src = 0, dst = 0; src < convertedBuffer.size(); src += 4, dst += 3) {
+                            rgb24Buffer[dst] = convertedBuffer[src]; rgb24Buffer[dst + 1] = convertedBuffer[src + 1];
+                            rgb24Buffer[dst + 2] = convertedBuffer[src + 2];
+                        }
+                        delivered = &rgb24Buffer;
+                    }
+                    size_t copySize = (std::min)((size_t)maxLen, delivered->size());
+                    memcpy(pData, delivered->data(), copySize);
                     pSample->SetActualDataLength((long)copySize);
                 }
 
-                REFERENCE_TIME rtStart = m_frameIndex * 333333LL;
+                REFERENCE_TIME rtStart = m_frameIndex++ * 333333LL;
                 REFERENCE_TIME rtEnd = rtStart + 333333LL;
                 pSample->SetTime(&rtStart, &rtEnd);
                 pSample->SetSyncPoint(TRUE);

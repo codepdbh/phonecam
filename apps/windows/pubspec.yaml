@@ -11,7 +11,10 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.5.1
-  flutter_webrtc: ^1.4.1
+  # Local Windows adaptation publishes decoded I420 frames directly to the
+  # PhoneCam broker as NV12. Other platforms keep using the upstream Dart API.
+  flutter_webrtc:
+    path: ../../packages/flutter_webrtc_phonecam
   shared_models:
     path: ../../packages/shared_models
   protocol:

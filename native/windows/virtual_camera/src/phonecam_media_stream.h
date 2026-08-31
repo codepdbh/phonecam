@@ -2,13 +2,14 @@
 
 #include "phonecam_virtual_cam.h"
 #include "synthetic_frame_generator.h"
+#include "phonecam_shared_memory.h"
 #include <queue>
 #include <thread>
 #include <condition_variable>
 
 class PhoneCamMediaSource;
 
-class PhoneCamMediaStream : public IMFMediaStream {
+class PhoneCamMediaStream : public IMFMediaStream2 {
 public:
     PhoneCamMediaStream(PhoneCamMediaSource* pSource, IMFStreamDescriptor* pStreamDesc);
     virtual ~PhoneCamMediaStream();
@@ -29,21 +30,29 @@ public:
     STDMETHODIMP GetStreamDescriptor(IMFStreamDescriptor** ppStreamDescriptor) override;
     STDMETHODIMP RequestSample(IUnknown* pToken) override;
 
+    // IMFMediaStream2 (required by Windows Camera Frame Server)
+    STDMETHODIMP SetStreamState(MF_STREAM_STATE value) override;
+    STDMETHODIMP GetStreamState(MF_STREAM_STATE* value) override;
+
     // Internal Control
     HRESULT Start(const PROPVARIANT* pvarStartPosition);
     HRESULT Stop();
     HRESULT Pause();
     HRESULT Shutdown();
     HRESULT SetMediaType(IMFMediaType* pMediaType);
+    HRESULT SetSampleAllocator(IMFVideoSampleAllocator* allocator);
 
-    // Frame push
-    void PushFrame(const uint8_t* pBuffer, size_t size, int64_t timestampHns);
+    // The stream reads frames from the cross-process broker. These controls
+    // only affect fallback behavior and the negotiated output format.
     void EnableTestPattern(bool enable);
     void SetVideoConfig(const PhoneCamVideoConfig& config);
 
 private:
     void DeliveryWorkerThread();
-    HRESULT CreateSampleFromFrame(const uint8_t* pData, size_t size, int64_t timestampHns, IMFSample** ppSample);
+    HRESULT CreateSampleFromFrame(const uint8_t* pData, size_t size,
+                                  int64_t timestampHns,
+                                  const PhoneCamVideoConfig& config,
+                                  IMFSample** ppSample);
 
     std::atomic<ULONG> m_refCount;
     std::mutex m_mutex;
@@ -53,16 +62,16 @@ private:
     ComPtr<IMFStreamDescriptor> m_spStreamDesc;
     ComPtr<IMFMediaEventQueue> m_spEventQueue;
     ComPtr<IMFMediaType> m_spCurrentMediaType;
+    ComPtr<IMFVideoSampleAllocator> m_spSampleAllocator;
 
     PhoneCamVideoConfig m_config;
     bool m_isStreaming;
     bool m_isShutdown;
     bool m_useSyntheticPattern;
+    MF_STREAM_STATE m_streamState = MF_STREAM_STATE_STOPPED;
 
     SyntheticFrameGenerator m_syntheticGenerator;
-    std::vector<uint8_t> m_latestFrameBuffer;
-    bool m_hasNewFrame;
-    int64_t m_latestTimestampHns;
+    PhoneCamSharedMemory m_frameBroker;
     uint64_t m_frameCounter;
 
     std::queue<ComPtr<IUnknown>> m_sampleRequests;

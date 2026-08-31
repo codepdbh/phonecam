@@ -5,6 +5,7 @@
 #endif
 
 #include <windows.h>
+#include <strsafe.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -22,8 +23,15 @@ using Microsoft::WRL::ComPtr;
 // {E4D8A9F1-3142-4A2D-A483-E18F54687791}
 EXTERN_C const GUID CLSID_PhoneCamMediaSource;
 
+// {E4D8A9F3-3142-4A2D-A483-E18F54687791}. DirectShow intentionally uses a
+// different COM identity so activation through IUnknown is deterministic.
+EXTERN_C const GUID CLSID_PhoneCamDShowSource;
+
 // {E4D8A9F2-3142-4A2D-A483-E18F54687791}
 EXTERN_C const GUID GUID_PhoneCamVirtualCameraCategory;
+
+void PhoneCamComObjectCreated();
+void PhoneCamComObjectDestroyed();
 
 enum class PhoneCamPixelFormat {
     NV12,

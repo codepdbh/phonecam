@@ -12,8 +12,10 @@ include_directories(
 
 set(SOURCES
     src/synthetic_frame_generator.cpp
+    src/phonecam_frame_converter.cpp
     src/phonecam_media_stream.cpp
     src/phonecam_media_source.cpp
+    src/phonecam_media_source_activate.cpp
     src/phonecam_dshow_filter.cpp
     src/phonecam_ffi_exports.cpp
     src/exports.def
@@ -26,6 +28,7 @@ target_link_libraries(PhoneCamMediaSource PRIVATE
     mfuuid
     mf
     mfreadwrite
+    mfsensorgroup
     strmiids
     ole32
     oleaut32
@@ -35,7 +38,7 @@ target_link_libraries(PhoneCamMediaSource PRIVATE
 )
 
 set_target_properties(PhoneCamMediaSource PROPERTIES
-    OUTPUT_NAME "PhoneCamMediaSource"
+    OUTPUT_NAME "PhoneCamMediaSource_v7"
     PREFIX ""
 )
 
@@ -46,4 +49,33 @@ add_executable(PhoneCamTestRunner
 
 target_link_libraries(PhoneCamTestRunner PRIVATE
     PhoneCamMediaSource
+)
+
+add_executable(PhoneCamContractTest
+    src/test_media_source_contract.cpp
+)
+target_link_libraries(PhoneCamContractTest PRIVATE
+    mfplat
+    mfuuid
+    ole32
+)
+
+add_executable(PhoneCamFrameBrokerTest
+    src/test_frame_broker.cpp
+    src/phonecam_frame_converter.cpp
+)
+
+add_executable(PhoneCamCaptureTest
+    src/test_virtual_camera_capture.cpp
+)
+target_link_libraries(PhoneCamCaptureTest PRIVATE
+    mfplat
+    mfuuid
+    mf
+    mfreadwrite
+    ole32
+)
+
+add_executable(PhoneCamBrokerStats
+    src/test_broker_stats.cpp
 )

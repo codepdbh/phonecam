@@ -9,7 +9,8 @@ class SignalingClient {
   final String host;
   final int port;
 
-  final _onMessageController = StreamController<Map<String, dynamic>>.broadcast();
+  final _onMessageController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _onStateChangeController = StreamController<bool>.broadcast();
 
   Stream<Map<String, dynamic>> get onMessage => _onMessageController.stream;
@@ -25,7 +26,8 @@ class SignalingClient {
     try {
       final wsUrl = 'ws://$host:$port/ws';
       debugPrint('[SIGNALING] Connecting to $wsUrl');
-      _socket = await WebSocket.connect(wsUrl).timeout(const Duration(seconds: 4));
+      _socket =
+          await WebSocket.connect(wsUrl).timeout(const Duration(seconds: 4));
       _isConnected = true;
       _onStateChangeController.add(true);
 

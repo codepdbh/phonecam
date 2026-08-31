@@ -11,6 +11,7 @@ class TelemetryBottomBar extends ConsumerWidget {
     final state = ref.watch(phoneCamProvider);
     final stats = state.stats;
     final isStreaming = state.connectionState == AppConnectionState.streaming;
+    final hasCameraError = state.virtualCameraError.isNotEmpty;
 
     return Container(
       height: 48,
@@ -40,6 +41,17 @@ class TelemetryBottomBar extends ConsumerWidget {
               child: Row(
                 children: [
                   if (isStreaming && stats != null) ...[
+                    if (state.isVirtualCameraActive) ...[
+                      _buildStatItem(
+                        icon: Icons.video_camera_back_rounded,
+                        label: 'Virtual frames',
+                        value: '${state.virtualCameraPublishedFrames}',
+                        valueColor: state.virtualCameraRejectedFrames == 0
+                            ? const Color(0xFF00E676)
+                            : const Color(0xFFFF5252),
+                      ),
+                      const SizedBox(width: 18),
+                    ],
                     _buildStatItem(
                       icon: Icons.aspect_ratio_rounded,
                       label: 'Resolution',
@@ -81,7 +93,7 @@ class TelemetryBottomBar extends ConsumerWidget {
                       'No active telemetry stream',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.white.withOpacity(0.35),
+                        color: Colors.white.withValues(alpha: 0.35),
                       ),
                     ),
                   ],
@@ -93,41 +105,56 @@ class TelemetryBottomBar extends ConsumerWidget {
           const SizedBox(width: 12),
 
           // Virtual Camera Device Tag
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: state.isVirtualCameraActive
-                  ? const Color(0xFF00E676).withOpacity(0.12)
-                  : const Color(0xFF1A2233),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: state.isVirtualCameraActive
-                    ? const Color(0xFF00E676).withOpacity(0.4)
-                    : const Color(0xFF28344E),
+          Tooltip(
+            message: hasCameraError
+                ? state.virtualCameraError
+                : 'Virtual camera status',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: hasCameraError
+                    ? const Color(0xFFFF5252).withValues(alpha: 0.12)
+                    : state.isVirtualCameraActive
+                        ? const Color(0xFF00E676).withValues(alpha: 0.12)
+                        : const Color(0xFF1A2233),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: hasCameraError
+                      ? const Color(0xFFFF5252).withValues(alpha: 0.5)
+                      : state.isVirtualCameraActive
+                          ? const Color(0xFF00E676).withValues(alpha: 0.4)
+                          : const Color(0xFF28344E),
+                ),
               ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.camera_alt_rounded,
-                  size: 13,
-                  color: state.isVirtualCameraActive
-                      ? const Color(0xFF00E676)
-                      : Colors.white54,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  'PhoneCam Virtual Camera: ${state.isVirtualCameraActive ? "LIVE" : "OFFLINE"}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: state.isVirtualCameraActive
-                        ? const Color(0xFF00E676)
-                        : Colors.white60,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.camera_alt_rounded,
+                    size: 13,
+                    color: hasCameraError
+                        ? const Color(0xFFFF5252)
+                        : state.isVirtualCameraActive
+                            ? const Color(0xFF00E676)
+                            : Colors.white54,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 5),
+                  Text(
+                    state.virtualCameraError.isNotEmpty
+                        ? 'PhoneCam: ERROR'
+                        : 'PhoneCam Virtual Camera: ${state.isVirtualCameraActive ? "LIVE" : "OFFLINE"}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: hasCameraError
+                          ? const Color(0xFFFF5252)
+                          : state.isVirtualCameraActive
+                              ? const Color(0xFF00E676)
+                              : Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -168,7 +195,7 @@ class TelemetryBottomBar extends ConsumerWidget {
             boxShadow: [
               if (state == AppConnectionState.streaming)
                 BoxShadow(
-                  color: color.withOpacity(0.6),
+                  color: color.withValues(alpha: 0.6),
                   blurRadius: 6,
                   spreadRadius: 1,
                 ),
@@ -203,7 +230,7 @@ class TelemetryBottomBar extends ConsumerWidget {
           '$label: ',
           style: TextStyle(
             fontSize: 11,
-            color: Colors.white.withOpacity(0.4),
+            color: Colors.white.withValues(alpha: 0.4),
           ),
         ),
         Text(

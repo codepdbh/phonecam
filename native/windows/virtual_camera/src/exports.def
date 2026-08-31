@@ -1,4 +1,4 @@
-LIBRARY PhoneCamMediaSource
+LIBRARY PhoneCamMediaSource_v7
 EXPORTS
     DllGetClassObject PRIVATE
     DllCanUnloadNow PRIVATE
@@ -10,5 +10,10 @@ EXPORTS
     PhoneCam_DisposeVirtualCamera
     PhoneCam_SetVideoFormat
     PhoneCam_PushVideoFrame
+    PhoneCam_PushNV12Frame
     PhoneCam_EnableTestPattern
     PhoneCam_GetStatus
+    PhoneCam_GetLastHResult
+    PhoneCam_GetLastErrorStage
+    PhoneCam_GetPublishedFrameCount
+    PhoneCam_GetRejectedFrameCount
