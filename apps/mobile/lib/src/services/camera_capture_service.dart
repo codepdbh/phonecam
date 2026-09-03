@@ -7,6 +7,13 @@ class CameraCaptureService {
   MediaStream? _localStream;
   MediaStream? get localStream => _localStream;
 
+  /// Invoked with the new video track whenever [startStream] replaces the
+  /// active stream (camera switch, resolution or FPS change). The WebRTC
+  /// sender must call `RTCRtpSender.replaceTrack` with it so the already
+  /// negotiated peer connection keeps sending frames instead of silently
+  /// holding on to a stopped track.
+  void Function(MediaStreamTrack track)? onVideoTrackReplaced;
+
   List<MediaDeviceInfo> _devices = [];
   List<CameraInfo> _availableCameras = [];
   List<CameraInfo> get availableCameras => _availableCameras;
@@ -115,16 +122,26 @@ class CameraCaptureService {
       },
     };
 
-    try {
-      if (_localStream != null) {
-        for (final track in _localStream!.getTracks()) {
-          await track.stop();
-        }
-        await _localStream!.dispose();
-        _localStream = null;
-      }
+    final previousStream = _localStream;
+    final isReplacement = previousStream != null;
 
-      _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    // The underlying camera hardware only allows one open session per
+    // device: releasing it has to happen BEFORE requesting the new
+    // constraints, or getUserMedia() fails silently on Android ("camera in
+    // use") and the resolution/fps change is a no-op. This plugin's
+    // MediaStreamTrack.applyConstraints() is a stub for video, so
+    // stop-then-reacquire is the only way to actually change format.
+    if (previousStream != null) {
+      for (final track in previousStream.getTracks()) {
+        await track.stop();
+      }
+      await previousStream.dispose();
+      _localStream = null;
+    }
+
+    try {
+      final newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      _localStream = newStream;
       if (_isInitialized) {
         localRenderer.srcObject = _localStream;
       }
@@ -132,6 +149,13 @@ class CameraCaptureService {
       _currentZoom = 1.0;
       _isTorchOn = false;
       debugPrint('[CAMERA] Stream started successfully at ${_currentResolution.label} @ ${_currentFps}fps');
+
+      if (isReplacement && onVideoTrackReplaced != null) {
+        final newTrack = newStream.getVideoTracks().isNotEmpty
+            ? newStream.getVideoTracks().first
+            : null;
+        if (newTrack != null) onVideoTrackReplaced!(newTrack);
+      }
       return true;
     } catch (e) {
       debugPrint('[CAMERA] Failed to get user media: $e');

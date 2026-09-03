@@ -84,8 +84,8 @@ STDMETHODIMP PhoneCamMediaStream::RequestSample(IUnknown* token) {
     std::vector<uint8_t> brokerFrame;
     std::vector<uint8_t> outputFrame;
     bool realFrame = false;
+    PhoneCamFrameMetadata metadata{};
     if (!forcePattern) {
-        PhoneCamFrameMetadata metadata{};
         if (m_frameBroker.ReadLatestFrame(metadata, brokerFrame))
             realFrame = PhoneCamConvertFrame(metadata, brokerFrame, config, outputFrame);
     }
@@ -94,9 +94,11 @@ STDMETHODIMP PhoneCamMediaStream::RequestSample(IUnknown* token) {
         m_syntheticGenerator.GenerateNextFrame(outputFrame, frameIndex);
     }
 
+    const int64_t timestamp =
+        ComputeSampleTimestamp(realFrame, metadata.frameIndex, metadata.timestampUs);
     ComPtr<IMFSample> sample;
     HRESULT hr = CreateSampleFromFrame(outputFrame.data(), outputFrame.size(),
-                                       MFGetSystemTime(), config, &sample);
+                                       timestamp, config, &sample);
     if (FAILED(hr)) return hr;
     if (token) {
         hr = sample->SetUnknown(MFSampleExtension_Token, token);
@@ -134,6 +136,13 @@ HRESULT PhoneCamMediaStream::Start(const PROPVARIANT* position) {
         m_isStreaming = true;
         m_streamState = MF_STREAM_STATE_RUNNING;
         m_frameCounter = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_timelineMutex);
+        m_qpcBaseline = 0;
+        m_sourceBaselineUs = 0;
+        m_lastFrameIndexSeen = 0;
+        m_lastSampleTimestamp = 0;
     }
     PROPVARIANT value; PropVariantInit(&value);
     if (position) PropVariantCopy(&value, position);
@@ -225,8 +234,8 @@ void PhoneCamMediaStream::DeliveryWorkerThread() {
         }
 
         bool realFrame = false;
+        PhoneCamFrameMetadata metadata{};
         if (!forcePattern) {
-            PhoneCamFrameMetadata metadata{};
             if (m_frameBroker.ReadLatestFrame(metadata, brokerFrame))
                 realFrame = PhoneCamConvertFrame(metadata, brokerFrame, config, outputFrame);
         }
@@ -237,7 +246,10 @@ void PhoneCamMediaStream::DeliveryWorkerThread() {
         // Frame Server requires timestamps correlated to the system QPC clock.
         // A stream-relative timestamp starting at zero is treated as stale and
         // its frames may be silently dropped by browser/capture pipelines.
-        const int64_t timestamp = MFGetSystemTime();
+        // ComputeSampleTimestamp() maps the broker's real arrival cadence onto
+        // that QPC timeline instead of always stamping "now".
+        const int64_t timestamp =
+            ComputeSampleTimestamp(realFrame, metadata.frameIndex, metadata.timestampUs);
         ++m_frameCounter;
         ComPtr<IMFSample> sample;
         HRESULT hr = CreateSampleFromFrame(outputFrame.data(), outputFrame.size(),
@@ -314,4 +326,43 @@ HRESULT PhoneCamMediaStream::CreateSampleFromFrame(const uint8_t* data, size_t s
     sample->SetSampleDuration(static_cast<LONGLONG>(config.GetFrameDurationHns()));
     sample->SetUINT32(MFSampleExtension_CleanPoint, TRUE);
     *result = sample.Detach(); return S_OK;
+}
+
+int64_t PhoneCamMediaStream::ComputeSampleTimestamp(bool realFrame, uint64_t frameIndex,
+                                                     uint64_t sourceTimestampUs) {
+    std::lock_guard<std::mutex> lock(m_timelineMutex);
+    const int64_t now = MFGetSystemTime();
+    // 2 seconds of drift, expressed in 100ns units.
+    constexpr int64_t kMaxDriftHns = 20'000'000;
+
+    const bool isNewFrame = realFrame && frameIndex != m_lastFrameIndexSeen;
+    if (isNewFrame) {
+        if (m_qpcBaseline == 0) {
+            m_qpcBaseline = now;
+            m_sourceBaselineUs = sourceTimestampUs;
+        }
+        // Map the producer's arrival clock onto our QPC timeline so genuine
+        // inter-frame spacing survives instead of every sample reading "now".
+        int64_t candidate = m_qpcBaseline +
+            static_cast<int64_t>(sourceTimestampUs - m_sourceBaselineUs) * 10;
+        // The two clocks (libwebrtc's steady_clock vs. MFGetSystemTime's QPC)
+        // can only be assumed to advance at the same rate, not share an
+        // epoch — resync whenever they drift apart by more than a couple of
+        // seconds (producer restart, long stall, first frame after Start()).
+        if (candidate < now - kMaxDriftHns || candidate > now + kMaxDriftHns) {
+            m_qpcBaseline = now;
+            m_sourceBaselineUs = sourceTimestampUs;
+            candidate = now;
+        }
+        if (candidate <= m_lastSampleTimestamp) candidate = m_lastSampleTimestamp + 1;
+        m_lastSampleTimestamp = candidate;
+        m_lastFrameIndexSeen = frameIndex;
+    } else {
+        // Repeating the last real frame (consumer pulling faster than the
+        // source produces) or serving the synthetic pattern: pace to real
+        // wall-clock time so the presentation clock keeps moving forward
+        // smoothly instead of jumping once a fresh frame finally arrives.
+        m_lastSampleTimestamp = (now > m_lastSampleTimestamp) ? now : m_lastSampleTimestamp + 1;
+    }
+    return m_lastSampleTimestamp;
 }

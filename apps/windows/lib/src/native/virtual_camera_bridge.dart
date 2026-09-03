@@ -56,6 +56,9 @@ class VirtualCameraBridge {
   _GetStatusDart? _getLastErrorStage;
   _GetUint64Dart? _getPublishedFrameCount;
   _GetUint64Dart? _getRejectedFrameCount;
+  _GetStatusDart? _isFrameServerAvailable;
+  _GetStatusDart? _isRegistered;
+  _GetStatusDart? _probeFrameServerSupport;
 
   bool _isLoaded = false;
   bool get isLoaded => _isLoaded;
@@ -118,6 +121,14 @@ class VirtualCameraBridge {
       _getRejectedFrameCount = _dylib!
           .lookupFunction<_GetUint64Fn, _GetUint64Dart>(
               'PhoneCam_GetRejectedFrameCount');
+      _isFrameServerAvailable = _dylib!
+          .lookupFunction<_GetStatusFn, _GetStatusDart>(
+              'PhoneCam_IsFrameServerAvailable');
+      _isRegistered = _dylib!
+          .lookupFunction<_GetStatusFn, _GetStatusDart>('PhoneCam_IsRegistered');
+      _probeFrameServerSupport = _dylib!
+          .lookupFunction<_GetStatusFn, _GetStatusDart>(
+              'PhoneCam_ProbeFrameServerSupport');
 
       _isLoaded = true;
       debugPrint('[VIRTUAL_CAMERA] Native functions successfully bound');
@@ -153,4 +164,19 @@ class VirtualCameraBridge {
   int get lastErrorStage => _getLastErrorStage?.call() ?? -1;
   int get publishedFrameCount => _getPublishedFrameCount?.call() ?? 0;
   int get rejectedFrameCount => _getRejectedFrameCount?.call() ?? 0;
+
+  /// True once the Media Foundation Frame Server virtual camera (Windows 11
+  /// 22H2+) is actually running. False on Windows 10 / older Windows 11 —
+  /// the DirectShow source still works there, this only tells apart which
+  /// discovery paths will see it.
+  bool get isFrameServerAvailable => (_isFrameServerAvailable?.call() ?? 0) != 0;
+
+  /// True once the native driver's COM classes are registered machine-wide
+  /// (i.e. install_virtual_camera.ps1 has been run at least once).
+  bool get isRegistered => (_isRegistered?.call() ?? 0) != 0;
+
+  /// Whether this Windows install can host the Frame Server virtual camera
+  /// (Windows 11 22H2+) at all, independent of whether the camera has been
+  /// started yet. Safe to call for up-front "what to expect" messaging.
+  bool get supportsFrameServer => (_probeFrameServerSupport?.call() ?? 0) != 0;
 }

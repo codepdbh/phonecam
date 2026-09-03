@@ -57,13 +57,18 @@ class FlutterVideoRenderer
   std::unique_ptr<flutter::TextureVariant> texture_;
   std::shared_ptr<FlutterDesktopPixelBuffer> pixel_buffer_;
   mutable std::shared_ptr<uint8_t[]> rgb_buffer_;
+  // Scratch space for CopyPixelBuffer() when the frame needs rotating: holds
+  // the raw (unrotated) ARGB conversion before it's rotated into rgb_buffer_.
+  mutable std::vector<uint8_t> rotate_scratch_buffer_;
   mutable std::mutex mutex_;
   RTCVideoFrame::VideoRotation rotation_ = RTCVideoFrame::kVideoRotation_0;
 
 #if defined(_WINDOWS)
   using PhoneCamPushNV12Fn = int (*)(int, int, int, const uint8_t*, size_t, int64_t);
+  using PhoneCamGetFpsFn = int (*)();
   void PublishPhoneCamFrame(const scoped_refptr<RTCVideoFrame>& frame);
   PhoneCamPushNV12Fn phonecam_push_nv12_ = nullptr;
+  PhoneCamGetFpsFn phonecam_get_fps_ = nullptr;
   std::vector<uint8_t> phonecam_nv12_buffer_;
 #endif
 };

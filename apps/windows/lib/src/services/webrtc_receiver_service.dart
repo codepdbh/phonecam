@@ -42,6 +42,13 @@ class WebRtcReceiverService {
   bool get isVirtualCameraActive => _isVirtualCameraActive;
   String _virtualCameraError = '';
   String get virtualCameraError => _virtualCameraError;
+
+  // Requested output format for the virtual camera. Only 720p and 1080p @
+  // NV12 are actually advertised by the native filter (see
+  // native/windows/virtual_camera), so anything else is clamped to the
+  // closest supported size when applied.
+  int _vcWidth = 1920;
+  int _vcFps = 30;
   int get publishedVirtualCameraFrames =>
       VirtualCameraBridge.instance.publishedFrameCount;
   int get rejectedVirtualCameraFrames =>
@@ -251,9 +258,29 @@ class WebRtcReceiverService {
   void setExposure(double offset) =>
       sendCommand(CameraCommands.createExposure(offset));
   void setTorch(bool enable) => sendCommand(CameraCommands.createFlash(enable));
-  void setResolution(VideoResolution res) =>
-      sendCommand(StreamCommands.createResolution(res));
-  void setFps(int fps) => sendCommand(StreamCommands.createFps(fps));
+  void setResolution(VideoResolution res) {
+    sendCommand(StreamCommands.createResolution(res));
+    _vcWidth = res.width;
+    _applyVirtualCameraFormat();
+  }
+
+  void setFps(int fps) {
+    sendCommand(StreamCommands.createFps(fps));
+    _vcFps = fps;
+    _applyVirtualCameraFormat();
+  }
+
+  /// Pushes the requested width/height/fps down to the native virtual
+  /// camera. The native filter only advertises 1280x720 and 1920x1080 (see
+  /// native/windows/virtual_camera/src/phonecam_media_source.cpp), so
+  /// anything else is clamped to the closest of those two before being
+  /// applied — picking an unsupported size here would silently no-op.
+  void _applyVirtualCameraFormat() {
+    if (!_isVirtualCameraActive) return;
+    final width = _vcWidth >= 1600 ? 1920 : 1280;
+    final height = _vcWidth >= 1600 ? 1080 : 720;
+    VirtualCameraBridge.instance.setVideoFormat(width, height, _vcFps, 0);
+  }
 
   // Virtual Camera management
   bool toggleVirtualCamera(bool enable) {
@@ -262,7 +289,9 @@ class WebRtcReceiverService {
       bridge.initialize();
       // Decoded WebRTC planes are published natively as NV12. The camera
       // source converts only when a consumer explicitly negotiates RGB32/YUY2.
-      bridge.setVideoFormat(1920, 1080, 30, 0);
+      final width = _vcWidth >= 1600 ? 1920 : 1280;
+      final height = _vcWidth >= 1600 ? 1080 : 720;
+      bridge.setVideoFormat(width, height, _vcFps, 0);
       final res = bridge.start();
       _isVirtualCameraActive = (res == 0);
       _virtualCameraError = '';

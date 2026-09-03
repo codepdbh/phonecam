@@ -280,13 +280,45 @@ HRESULT PhoneCamMediaSource::CreateDescriptors() {
         MF_DEVICEMFT_SENSORPROFILE_COLLECTION, profiles.Get());
     if (FAILED(hr)) return hr;
 
-    IMFMediaType* types[5] = {nullptr};
-    hr = CreateMediaType(1920, 1080, 30, MFVideoFormat_NV12, &types[0]);
-    if (SUCCEEDED(hr)) hr = CreateMediaType(1280, 720, 30, MFVideoFormat_NV12, &types[1]);
-    if (SUCCEEDED(hr)) hr = CreateMediaType(1920, 1080, 30, MFVideoFormat_YUY2, &types[2]);
-    if (SUCCEEDED(hr)) hr = CreateMediaType(1920, 1080, 30, MFVideoFormat_RGB32, &types[3]);
-    if (SUCCEEDED(hr)) hr = CreateMediaType(1280, 720, 30, MFVideoFormat_RGB32, &types[4]);
-    if (SUCCEEDED(hr)) hr = MFCreateStreamDescriptor(0, 5, types, &m_spStreamDesc);
+    // NV12 is canonical and is offered at several frame rates so consumers
+    // that pin a specific FPS (Meet, Zoom, OpenCV's DirectShow/MSMF backends)
+    // can actually get something other than a hardcoded 30. Index 0 stays
+    // 1920x1080 @ 30 NV12 so anything that blindly picks the first type keeps
+    // today's default behavior.
+    const UINT32 kFpsChoices[] = {30, 15, 24, 60};
+    struct Size { UINT32 width, height; };
+    const Size kSizeChoices[] = {{1920, 1080}, {1280, 720}};
+
+    std::vector<IMFMediaType*> types;
+    types.reserve(8 + 3);
+    for (const auto& size : kSizeChoices) {
+        for (const UINT32 fps : kFpsChoices) {
+            IMFMediaType* type = nullptr;
+            hr = CreateMediaType(size.width, size.height, fps, MFVideoFormat_NV12, &type);
+            if (FAILED(hr)) break;
+            types.push_back(type);
+        }
+        if (FAILED(hr)) break;
+    }
+    // Legacy pixel formats for consumers that cannot decode NV12; fixed at
+    // 30 fps to keep the format list bounded.
+    if (SUCCEEDED(hr)) {
+        IMFMediaType* type = nullptr;
+        hr = CreateMediaType(1920, 1080, 30, MFVideoFormat_YUY2, &type);
+        if (SUCCEEDED(hr)) types.push_back(type);
+    }
+    if (SUCCEEDED(hr)) {
+        IMFMediaType* type = nullptr;
+        hr = CreateMediaType(1920, 1080, 30, MFVideoFormat_RGB32, &type);
+        if (SUCCEEDED(hr)) types.push_back(type);
+    }
+    if (SUCCEEDED(hr)) {
+        IMFMediaType* type = nullptr;
+        hr = CreateMediaType(1280, 720, 30, MFVideoFormat_RGB32, &type);
+        if (SUCCEEDED(hr)) types.push_back(type);
+    }
+    if (SUCCEEDED(hr))
+        hr = MFCreateStreamDescriptor(0, static_cast<DWORD>(types.size()), types.data(), &m_spStreamDesc);
     for (auto* type : types) if (type) type->Release();
     if (FAILED(hr)) return hr;
     ComPtr<IMFAttributes> descriptorAttributes;

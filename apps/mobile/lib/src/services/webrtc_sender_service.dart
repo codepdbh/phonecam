@@ -29,12 +29,71 @@ class WebRtcSenderService {
   StreamSubscription? _offerSub;
   StreamSubscription? _candSub;
 
+  int? _lastBytesSent;
+  DateTime? _lastStatsTimestamp;
+
   WebRtcSenderService({
     required this.cameraService,
     required this.signalingServer,
     required this.deviceName,
   }) {
     _listenToSignaling();
+    cameraService.onVideoTrackReplaced = _handleVideoTrackReplaced;
+  }
+
+  /// Target bitrate for a given resolution. Mirrors the defaults in
+  /// [VideoFormat] so the encoder is actually pinned to a sane ceiling
+  /// instead of relying purely on WebRTC's default bandwidth estimation,
+  /// which tends to under- or over-shoot on variable WiFi links.
+  int _bitrateKbpsForResolution(VideoResolution res) {
+    final pixels = res.totalPixels;
+    if (pixels <= VideoResolution.r720p.totalPixels) return 3500;
+    if (pixels <= VideoResolution.r1080p.totalPixels) return 6000;
+    if (pixels <= VideoResolution.r1440p.totalPixels) return 10000;
+    return 16000;
+  }
+
+  Future<void> _applyEncodingParameters(RTCRtpSender sender) async {
+    try {
+      final maxBitrateBps =
+          _bitrateKbpsForResolution(cameraService.currentResolution) * 1000;
+      final current = sender.parameters;
+      final encodings = (current.encodings != null && current.encodings!.isNotEmpty)
+          ? current.encodings!
+          : [RTCRtpEncoding()];
+      for (final encoding in encodings) {
+        encoding.active = true;
+        encoding.maxBitrate = maxBitrateBps;
+        encoding.maxFramerate = cameraService.currentFps;
+      }
+      await sender.setParameters(RTCRtpParameters(
+        encodings: encodings,
+        degradationPreference: current.degradationPreference,
+      ));
+    } catch (e) {
+      debugPrint('[WEBRTC_SENDER] Failed to apply encoding parameters: $e');
+    }
+  }
+
+  Future<RTCRtpSender?> _findVideoSender() async {
+    if (_peerConnection == null) return null;
+    final senders = await _peerConnection!.getSenders();
+    for (final sender in senders) {
+      if (sender.track?.kind == 'video') return sender;
+    }
+    return null;
+  }
+
+  Future<void> _handleVideoTrackReplaced(MediaStreamTrack track) async {
+    final sender = await _findVideoSender();
+    if (sender == null) return;
+    try {
+      await sender.replaceTrack(track);
+      await _applyEncodingParameters(sender);
+      debugPrint('[WEBRTC_SENDER] Replaced outgoing video track: ${track.id}');
+    } catch (e) {
+      debugPrint('[WEBRTC_SENDER] Failed to replace video track: $e');
+    }
   }
 
   void _setState(AppConnectionState newState) {
@@ -90,7 +149,9 @@ class WebRtcSenderService {
     if (cameraService.localStream != null) {
       for (final track in cameraService.localStream!.getVideoTracks()) {
         debugPrint('[WEBRTC_SENDER] Attaching track: ${track.id} to peer connection');
-        await _peerConnection!.addTrack(track, cameraService.localStream!);
+        final sender =
+            await _peerConnection!.addTrack(track, cameraService.localStream!);
+        await _applyEncodingParameters(sender);
       }
     }
 
@@ -212,19 +273,39 @@ class WebRtcSenderService {
 
   void _startStatsCollector() {
     _statsTimer?.cancel();
+    _lastBytesSent = null;
+    _lastStatsTimestamp = null;
     _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_peerConnection == null) return;
       try {
         final stats = await _peerConnection!.getStats();
-        var bitrate = 6000.0;
-        var fps = 30.0;
-        var latency = 20;
+        var bitrate = 0.0;
+        var fps = 0.0;
+        var latency = 0;
+        final now = DateTime.now();
 
         for (final report in stats) {
           if (report.type == 'outbound-rtp' && report.values['kind'] == 'video') {
-            fps = (report.values['framesPerSecond'] as num?)?.toDouble() ?? 30.0;
+            fps = (report.values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
+            final bytes = (report.values['bytesSent'] as num?)?.toInt();
+            if (bytes != null &&
+                _lastBytesSent != null &&
+                _lastStatsTimestamp != null) {
+              final seconds =
+                  now.difference(_lastStatsTimestamp!).inMilliseconds / 1000;
+              if (seconds > 0) {
+                bitrate = (bytes - _lastBytesSent!) * 8 / seconds / 1000;
+              }
+            }
+            _lastBytesSent = bytes;
+          } else if (report.type == 'candidate-pair' &&
+              report.values['state'] == 'succeeded') {
+            final rtt =
+                (report.values['currentRoundTripTime'] as num?)?.toDouble();
+            if (rtt != null) latency = (rtt * 1000).toInt();
           }
         }
+        _lastStatsTimestamp = now;
 
         final telemetry = ConnectionStats(
           width: cameraService.currentResolution.width,

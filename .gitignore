@@ -36,3 +36,7 @@ apps/windows/build/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Packaged releases (built by scripts/package_release.ps1, published via
+# GitHub Releases instead of committed)
+dist/

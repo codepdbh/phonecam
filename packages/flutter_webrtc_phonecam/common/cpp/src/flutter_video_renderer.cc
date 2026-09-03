@@ -8,6 +8,28 @@
 
 namespace flutter_webrtc_plugin {
 
+namespace {
+// Maps a destination pixel coordinate in a `rotation`-corrected image back to
+// its source coordinate in the original (unrotated) srcW x srcH buffer.
+// Shared by the on-screen texture path (CopyPixelBuffer) and the virtual
+// camera publish path (PublishPhoneCamFrame) — both need to physically
+// rotate raw sensor-orientation pixels since neither Flutter's Texture
+// widget nor a DirectShow/MF sample carries rotation as separate metadata.
+inline void RotatedSourceCoord(RTCVideoFrame::VideoRotation rotation, int dx, int dy,
+                               int srcW, int srcH, int& sx, int& sy) {
+  switch (rotation) {
+    case RTCVideoFrame::kVideoRotation_90:
+      sx = dy; sy = (srcH - 1) - dx; break;
+    case RTCVideoFrame::kVideoRotation_180:
+      sx = (srcW - 1) - dx; sy = (srcH - 1) - dy; break;
+    case RTCVideoFrame::kVideoRotation_270:
+      sx = (srcW - 1) - dy; sy = dx; break;
+    default:
+      sx = dx; sy = dy; break;
+  }
+}
+}  // namespace
+
 FlutterVideoRenderer::~FlutterVideoRenderer() {}
 
 void FlutterVideoRenderer::initialize(
@@ -29,18 +51,54 @@ const FlutterDesktopPixelBuffer* FlutterVideoRenderer::CopyPixelBuffer(
     size_t height) const {
   mutex_.lock();
   if (pixel_buffer_.get() && frame_.get()) {
-    if (pixel_buffer_->width != frame_->width() ||
-        pixel_buffer_->height != frame_->height()) {
-      size_t buffer_size =
-          (size_t(frame_->width()) * size_t(frame_->height())) * (32 >> 3);
+    const int rawWidth = frame_->width();
+    const int rawHeight = frame_->height();
+    // ConvertToARGB() below has no rotation parameter — it always converts
+    // the raw sensor-orientation buffer. RTCVideoValue.aspectRatio on the
+    // Dart side already swaps width/height for a 90/270 rotation when
+    // sizing the widget (see rtc_video_renderer.dart), so leaving the pixel
+    // content unrotated stretches it into the wrong-shaped box. Rotate here
+    // so the texture's actual content matches what the widget expects.
+    const RTCVideoFrame::VideoRotation rotation = frame_->rotation();
+    const bool swapDims = rotation == RTCVideoFrame::kVideoRotation_90 ||
+                          rotation == RTCVideoFrame::kVideoRotation_270;
+    const int outWidth = swapDims ? rawHeight : rawWidth;
+    const int outHeight = swapDims ? rawWidth : rawHeight;
+
+    if (pixel_buffer_->width != static_cast<size_t>(outWidth) ||
+        pixel_buffer_->height != static_cast<size_t>(outHeight)) {
+      const size_t buffer_size =
+          static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4;
       rgb_buffer_.reset(new uint8_t[buffer_size]);
-      pixel_buffer_->width = frame_->width();
-      pixel_buffer_->height = frame_->height();
+      pixel_buffer_->width = outWidth;
+      pixel_buffer_->height = outHeight;
     }
 
-    frame_->ConvertToARGB(RTCVideoFrame::Type::kABGR, rgb_buffer_.get(), 0,
-                          static_cast<int>(pixel_buffer_->width),
-                          static_cast<int>(pixel_buffer_->height));
+    if (rotation == RTCVideoFrame::kVideoRotation_0) {
+      frame_->ConvertToARGB(RTCVideoFrame::Type::kABGR, rgb_buffer_.get(), 0,
+                            outWidth, outHeight);
+    } else {
+      // Convert at the raw (unrotated) size into a scratch buffer, then
+      // rotate the packed ARGB pixels into the final, correctly-shaped one.
+      const size_t rawBufferSize =
+          static_cast<size_t>(rawWidth) * static_cast<size_t>(rawHeight) * 4;
+      if (rotate_scratch_buffer_.size() != rawBufferSize) {
+        rotate_scratch_buffer_.resize(rawBufferSize);
+      }
+      frame_->ConvertToARGB(RTCVideoFrame::Type::kABGR,
+                            rotate_scratch_buffer_.data(), 0, rawWidth, rawHeight);
+      const auto* src =
+          reinterpret_cast<const uint32_t*>(rotate_scratch_buffer_.data());
+      auto* dst = reinterpret_cast<uint32_t*>(rgb_buffer_.get());
+      for (int dy = 0; dy < outHeight; ++dy) {
+        uint32_t* rowOut = dst + static_cast<size_t>(dy) * outWidth;
+        for (int dx = 0; dx < outWidth; ++dx) {
+          int sx, sy;
+          RotatedSourceCoord(rotation, dx, dy, rawWidth, rawHeight, sx, sy);
+          rowOut[dx] = src[static_cast<size_t>(sy) * rawWidth + sx];
+        }
+      }
+    }
 
     pixel_buffer_->buffer = rgb_buffer_.get();
     mutex_.unlock();
@@ -104,31 +162,85 @@ void FlutterVideoRenderer::PublishPhoneCamFrame(
     phonecam_push_nv12_ = reinterpret_cast<PhoneCamPushNV12Fn>(
         GetProcAddress(module, "PhoneCam_PushNV12Frame"));
     if (!phonecam_push_nv12_) return;
+    // Best-effort: if unavailable, PublishPhoneCamFrame() below falls back
+    // to a nominal 30fps rather than failing the whole publish path.
+    phonecam_get_fps_ = reinterpret_cast<PhoneCamGetFpsFn>(
+        GetProcAddress(module, "PhoneCam_GetConfiguredFps"));
   }
 
-  const int width = frame->width();
-  const int height = frame->height();
+  const int src_width = frame->width();
+  const int src_height = frame->height();
+  // WebRTC keeps the sensor's raw (usually landscape) buffer and ships the
+  // display rotation as separate per-frame metadata; the Flutter texture
+  // path only ever applies it as a widget-level transform (see
+  // didTextureChangeRotation in rtc_video_renderer_impl.dart), never to the
+  // pixels themselves. A virtual camera sample has no such metadata channel
+  // — Meet/Zoom/OpenCV would just render the raw sensor orientation — so the
+  // pixels have to be physically rotated here before publishing.
+  const RTCVideoFrame::VideoRotation rotation = frame->rotation();
+  const bool swapDims = rotation == RTCVideoFrame::kVideoRotation_90 ||
+                        rotation == RTCVideoFrame::kVideoRotation_270;
+  const int width = swapDims ? src_height : src_width;
+  const int height = swapDims ? src_width : src_height;
+
   const size_t y_size = static_cast<size_t>(width) * height;
   phonecam_nv12_buffer_.resize(y_size + y_size / 2);
   uint8_t* y_out = phonecam_nv12_buffer_.data();
   uint8_t* uv_out = y_out + y_size;
-  for (int row = 0; row < height; ++row) {
-    std::memcpy(y_out + static_cast<size_t>(row) * width,
-                frame->DataY() + static_cast<size_t>(row) * frame->StrideY(),
-                width);
-  }
-  for (int row = 0; row < height / 2; ++row) {
-    const uint8_t* u = frame->DataU() + static_cast<size_t>(row) * frame->StrideU();
-    const uint8_t* v = frame->DataV() + static_cast<size_t>(row) * frame->StrideV();
-    uint8_t* uv = uv_out + static_cast<size_t>(row) * width;
-    for (int col = 0; col < width / 2; ++col) {
-      uv[col * 2] = u[col];
-      uv[col * 2 + 1] = v[col];
+
+  const uint8_t* srcY = frame->DataY();
+  const int strideY = frame->StrideY();
+  const uint8_t* srcU = frame->DataU();
+  const int strideU = frame->StrideU();
+  const uint8_t* srcV = frame->DataV();
+  const int strideV = frame->StrideV();
+
+  if (rotation == RTCVideoFrame::kVideoRotation_0) {
+    // Fast path: no rotation needed, straight plane copies like before.
+    for (int row = 0; row < height; ++row) {
+      std::memcpy(y_out + static_cast<size_t>(row) * width,
+                  srcY + static_cast<size_t>(row) * strideY, width);
+    }
+    for (int row = 0; row < height / 2; ++row) {
+      const uint8_t* u = srcU + static_cast<size_t>(row) * strideU;
+      const uint8_t* v = srcV + static_cast<size_t>(row) * strideV;
+      uint8_t* uv = uv_out + static_cast<size_t>(row) * width;
+      for (int col = 0; col < width / 2; ++col) {
+        uv[col * 2] = u[col];
+        uv[col * 2 + 1] = v[col];
+      }
+    }
+  } else {
+    // Rotate Y (full resolution) and U/V (half resolution, 4:2:0) by mapping
+    // each destination sample back to its source coordinate.
+    for (int dy = 0; dy < height; ++dy) {
+      uint8_t* rowOut = y_out + static_cast<size_t>(dy) * width;
+      for (int dx = 0; dx < width; ++dx) {
+        int sx, sy;
+        RotatedSourceCoord(rotation, dx, dy, src_width, src_height, sx, sy);
+        rowOut[dx] = srcY[static_cast<size_t>(sy) * strideY + sx];
+      }
+    }
+    const int srcChromaW = src_width / 2;
+    const int srcChromaH = src_height / 2;
+    const int chromaW = width / 2;
+    const int chromaH = height / 2;
+    for (int dy = 0; dy < chromaH; ++dy) {
+      uint8_t* rowOut = uv_out + static_cast<size_t>(dy) * width;
+      for (int dx = 0; dx < chromaW; ++dx) {
+        int sx, sy;
+        RotatedSourceCoord(rotation, dx, dy, srcChromaW, srcChromaH, sx, sy);
+        rowOut[dx * 2] = srcU[static_cast<size_t>(sy) * strideU + sx];
+        rowOut[dx * 2 + 1] = srcV[static_cast<size_t>(sy) * strideV + sx];
+      }
     }
   }
+
   const auto timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
-  phonecam_push_nv12_(width, height, 30, phonecam_nv12_buffer_.data(),
+  const int fps = phonecam_get_fps_ ? phonecam_get_fps_() : 30;
+  phonecam_push_nv12_(width, height, fps > 0 ? fps : 30,
+                      phonecam_nv12_buffer_.data(),
                       phonecam_nv12_buffer_.size(), timestamp_us);
 }
 #endif

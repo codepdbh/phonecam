@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'widgets/devices_sidebar.dart';
 import 'widgets/video_stage.dart';
 import 'widgets/telemetry_bottom_bar.dart';
+import 'widgets/driver_status_banner.dart';
 
 class MainScreen extends StatelessWidget {
   const MainScreen({super.key});
@@ -12,6 +13,8 @@ class MainScreen extends StatelessWidget {
       backgroundColor: Color(0xFF090D13),
       body: Column(
         children: [
+          // Driver install / compatibility status, if there's anything to say.
+          DriverStatusBanner(),
           Expanded(
             child: Row(
               children: [

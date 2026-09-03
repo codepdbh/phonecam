@@ -23,8 +23,20 @@ class VideoStage extends ConsumerWidget {
             child: isStreaming
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: AspectRatio(
-                      aspectRatio: 16 / 9,
+                    // The phone can stream portrait (a selfie hold, or most
+                    // rear-camera portrait shots) just as easily as
+                    // landscape. A fixed 16:9 box here squeezed those into
+                    // the wrong shape; size it from the renderer's own
+                    // (rotation-aware) aspect ratio instead, falling back to
+                    // 16:9 only until the first frame's real size is known.
+                    child: ValueListenableBuilder<RTCVideoValue>(
+                      valueListenable: notifier.receiverService.renderer,
+                      builder: (context, value, child) {
+                        final ratio = value.width > 0 && value.height > 0
+                            ? value.aspectRatio
+                            : 16 / 9;
+                        return AspectRatio(aspectRatio: ratio, child: child);
+                      },
                       child: RTCVideoView(
                         notifier.receiverService.renderer,
                         objectFit:

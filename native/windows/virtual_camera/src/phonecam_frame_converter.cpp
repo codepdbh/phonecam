@@ -57,15 +57,26 @@ bool PhoneCamConvertFrame(const PhoneCamFrameMetadata& source,
     const uint8_t* yPlane = nv12->data();
     const uint8_t* uvPlane = nv12->data() + pixels;
     if (destination.format == PhoneCamPixelFormat::RGB32) {
+        // Width is guaranteed even (checked above), so pairs of columns
+        // always share one UV sample. Hoisting the row/2 lookup and the
+        // shared U/V pair out of the inner loop avoids a division and a
+        // bitmask per pixel, which matters when this runs synchronously on
+        // every RequestSample() pull at 1080p.
         output.resize(pixels * 4);
         for (uint32_t row = 0; row < destination.height; ++row) {
-            for (uint32_t col = 0; col < destination.width; ++col) {
-                const size_t yIndex = static_cast<size_t>(row) * destination.width + col;
-                const size_t uvIndex = static_cast<size_t>(row / 2) * destination.width + (col & ~1u);
+            const uint8_t* yRow = yPlane + static_cast<size_t>(row) * destination.width;
+            const uint8_t* uvRow = uvPlane + static_cast<size_t>(row / 2) * destination.width;
+            uint8_t* outRow = output.data() + static_cast<size_t>(row) * destination.width * 4;
+            for (uint32_t col = 0; col < destination.width; col += 2) {
+                const uint8_t u = uvRow[col];
+                const uint8_t v = uvRow[col + 1];
                 uint8_t b, g, r;
-                Nv12Pixel(yPlane[yIndex], uvPlane[uvIndex], uvPlane[uvIndex + 1], b, g, r);
-                const size_t dst = yIndex * 4;
-                output[dst] = b; output[dst + 1] = g; output[dst + 2] = r; output[dst + 3] = 255;
+                Nv12Pixel(yRow[col], u, v, b, g, r);
+                outRow[col * 4] = b; outRow[col * 4 + 1] = g;
+                outRow[col * 4 + 2] = r; outRow[col * 4 + 3] = 255;
+                Nv12Pixel(yRow[col + 1], u, v, b, g, r);
+                outRow[(col + 1) * 4] = b; outRow[(col + 1) * 4 + 1] = g;
+                outRow[(col + 1) * 4 + 2] = r; outRow[(col + 1) * 4 + 3] = 255;
             }
         }
         return true;

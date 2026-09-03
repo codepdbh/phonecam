@@ -1,7 +1,22 @@
 # Windows virtual camera
 
-PhoneCam uses the Windows 11 Media Foundation virtual-camera API. The source is
-loaded by Windows Camera Frame Server, so its COM registration must be
+PhoneCam registers two COM sources at once: a Media Foundation Frame Server
+source (`CLSID_PhoneCamMediaSource`) and a DirectShow source
+(`CLSID_PhoneCamDShowSource`), both backed by the same frame broker. The
+Frame Server source needs `MFCreateVirtualCamera`, exported by
+`mfsensorgroup.dll`, which only exists on **Windows 11 22H2 and newer**. The
+DirectShow source has no such requirement and works standalone on any
+Windows version — `PhoneCam_StartVirtualCamera()` degrades to DirectShow-only
+instead of failing outright when Frame Server isn't available (see
+`PhoneCam_IsFrameServerAvailable()` / `PhoneCam_ProbeFrameServerSupport()` in
+`phonecam_ffi_exports.h`). Zoom, OBS, classic Chromium camera pickers and
+OpenCV's `cv2.VideoCapture(..., cv2.CAP_DSHOW)` all discover it either way;
+only apps that exclusively enumerate cameras through the modern Windows 11
+camera stack need the Frame Server path. The desktop app checks
+`PhoneCam_IsRegistered()` on startup and shows a banner explaining which mode
+is active, or prompting to install the driver if it isn't registered at all.
+
+The source is loaded by Windows Camera Frame Server, so its COM registration must be
 machine-wide even though the virtual camera uses `CurrentUser` access.
 
 ## Installation
@@ -54,6 +69,31 @@ and consumes the same broker.
 
 NV12 is canonical. Scaling and RGB32/YUY2 conversion occur only when required
 by the consumer.
+
+## Orientation
+
+Decoded WebRTC frames carry the display rotation as separate metadata
+(`RTCVideoFrame::rotation()`), not baked into the pixel buffer — neither
+Flutter's `Texture` widget nor a DirectShow/MF sample has a channel for that
+metadata, so both `FlutterVideoRenderer::CopyPixelBuffer()` (on-screen
+preview) and `PublishPhoneCamFrame()` (virtual camera) physically rotate the
+Y/U/V (or ARGB) planes to match before handing them off. See
+`RotatedSourceCoord()` in
+`packages/flutter_webrtc_phonecam/common/cpp/src/flutter_video_renderer.cc`.
+
+## Packaging a release
+
+```powershell
+.\scripts\package_release.ps1 -Zip
+```
+
+Builds the native DLL, the Windows app and the Android APK (in that order —
+the native DLL must exist before the Windows app's CMake project is first
+configured, or its `install()` step has nothing to bundle next to the exe)
+and assembles `dist/PhoneCam-Windows/` (exe + DLL + installer scripts) and
+`dist/PhoneCam-Android.apk`, ready to zip and hand to someone else. They only
+need to run `windows.exe`; the app detects on startup whether the driver is
+registered and offers a one-click (UAC-elevated) install if not.
 
 ## Verification
 

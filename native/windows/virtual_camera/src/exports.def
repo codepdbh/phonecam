@@ -5,6 +5,7 @@ EXPORTS
     DllRegisterServer PRIVATE
     DllUnregisterServer PRIVATE
     PhoneCam_InitializeVirtualCamera
+    PhoneCam_ProbeFrameServerSupport
     PhoneCam_StartVirtualCamera
     PhoneCam_StopVirtualCamera
     PhoneCam_DisposeVirtualCamera
@@ -12,6 +13,9 @@ EXPORTS
     PhoneCam_PushVideoFrame
     PhoneCam_PushNV12Frame
     PhoneCam_EnableTestPattern
+    PhoneCam_GetConfiguredFps
+    PhoneCam_IsFrameServerAvailable
+    PhoneCam_IsRegistered
     PhoneCam_GetStatus
     PhoneCam_GetLastHResult
     PhoneCam_GetLastErrorStage

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:discovery/discovery.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_models/shared_models.dart';
+import '../services/driver_installer_service.dart';
 import '../services/webrtc_receiver_service.dart';
 
 class PhoneCamState {
@@ -20,6 +21,9 @@ class PhoneCamState {
   final VideoResolution selectedResolution;
   final int selectedFps;
   final String? activeCameraId;
+  final DriverStatus driverStatus;
+  final bool isInstallingDriver;
+  final String? driverInstallMessage;
 
   const PhoneCamState({
     this.discoveredDevices = const [],
@@ -37,6 +41,9 @@ class PhoneCamState {
     this.selectedResolution = VideoResolution.r1080p,
     this.selectedFps = 30,
     this.activeCameraId,
+    this.driverStatus = DriverStatus.checking,
+    this.isInstallingDriver = false,
+    this.driverInstallMessage,
   });
 
   PhoneCamState copyWith({
@@ -55,6 +62,10 @@ class PhoneCamState {
     VideoResolution? selectedResolution,
     int? selectedFps,
     String? activeCameraId,
+    DriverStatus? driverStatus,
+    bool? isInstallingDriver,
+    String? driverInstallMessage,
+    bool clearDriverInstallMessage = false,
   }) {
     return PhoneCamState(
       discoveredDevices: discoveredDevices ?? this.discoveredDevices,
@@ -75,6 +86,11 @@ class PhoneCamState {
       selectedResolution: selectedResolution ?? this.selectedResolution,
       selectedFps: selectedFps ?? this.selectedFps,
       activeCameraId: activeCameraId ?? this.activeCameraId,
+      driverStatus: driverStatus ?? this.driverStatus,
+      isInstallingDriver: isInstallingDriver ?? this.isInstallingDriver,
+      driverInstallMessage: clearDriverInstallMessage
+          ? null
+          : (driverInstallMessage ?? this.driverInstallMessage),
     );
   }
 }
@@ -84,6 +100,7 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
   final AdbUsbDiscoveryService _adbUsbDiscoveryService =
       AdbUsbDiscoveryService();
   final WebRtcReceiverService receiverService = WebRtcReceiverService();
+  final DriverInstallerService driverInstaller = DriverInstallerService();
 
   StreamSubscription? _udpSub;
   StreamSubscription? _usbSub;
@@ -99,6 +116,7 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
   }
 
   void _init() {
+    state = state.copyWith(driverStatus: driverInstaller.check());
     _discoveryService.startListening();
     _adbUsbDiscoveryService.startPolling();
 
@@ -176,6 +194,15 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
   }
 
   void toggleVirtualCamera() {
+    if (state.driverStatus == DriverStatus.notInstalled) {
+      // Nothing to toggle yet — surface the install prompt instead of
+      // letting the native call fail with an opaque HRESULT.
+      state = state.copyWith(
+        driverInstallMessage:
+            'Instala el driver de cámara virtual primero (botón de arriba).',
+      );
+      return;
+    }
     final newState = !state.isVirtualCameraActive;
     final success = receiverService.toggleVirtualCamera(newState);
     state = state.copyWith(
@@ -184,6 +211,24 @@ class PhoneCamNotifier extends StateNotifier<PhoneCamState> {
       virtualCameraPublishedFrames:
           receiverService.publishedVirtualCameraFrames,
       virtualCameraRejectedFrames: receiverService.rejectedVirtualCameraFrames,
+    );
+  }
+
+  /// Re-reads the driver's registration/capability status without touching
+  /// the camera itself. Cheap — just a couple of registry/module lookups.
+  void recheckDriverStatus() {
+    state = state.copyWith(driverStatus: driverInstaller.check());
+  }
+
+  Future<void> installDriver() async {
+    if (state.isInstallingDriver) return;
+    state = state.copyWith(
+        isInstallingDriver: true, clearDriverInstallMessage: true);
+    final result = await driverInstaller.install();
+    state = state.copyWith(
+      isInstallingDriver: false,
+      driverInstallMessage: result.message,
+      driverStatus: driverInstaller.check(),
     );
   }
 

@@ -20,6 +20,12 @@ DEFINE_GUID(GUID_PhoneCamVirtualCameraCategory, 0xe4d8a9f2, 0x3142, 0x4a2d, 0xa4
 namespace {
 std::atomic<bool> g_initialized{false};
 std::atomic<bool> g_started{false};
+// False when running without the Media Foundation Frame Server virtual
+// camera (mfsensorgroup.dll / MFCreateVirtualCamera, Windows 11 22H2+
+// only). The DirectShow source registered by DllRegisterServer still works
+// standalone on any Windows version, so this only affects which *kind* of
+// consumer can see the camera, not whether the camera works at all.
+std::atomic<bool> g_frameServerAvailable{false};
 std::atomic<HRESULT> g_lastError{S_OK};
 std::atomic<int> g_lastStage{0};
 std::atomic<LONG> g_serverLocks{0};
@@ -159,16 +165,35 @@ PHONECAM_API int PhoneCam_InitializeVirtualCamera() {
     g_initialized = true; g_lastError = S_OK; return PHONECAM_STATUS_OK;
 }
 
+PHONECAM_API int PhoneCam_ProbeFrameServerSupport() {
+    // Pure capability probe — does not create or start anything, so it is
+    // safe to call before the user has activated the camera (e.g. for a
+    // one-time "what will this look like on your Windows version" check).
+    HMODULE mf = GetModuleHandleW(L"mfsensorgroup.dll");
+    if (!mf) mf = LoadLibraryW(L"mfsensorgroup.dll");
+    if (!mf) return 0;
+    return GetProcAddress(mf, "MFCreateVirtualCamera") ? 1 : 0;
+}
 PHONECAM_API int PhoneCam_StartVirtualCamera() {
     int status = PhoneCam_InitializeVirtualCamera(); if (status != PHONECAM_STATUS_OK) return status;
     if (g_started) return PHONECAM_STATUS_OK;
     // MFCreateVirtualCamera is exported by mfsensorgroup.dll on current
-    // Windows 11 builds (not mfplat.dll as older prototypes assumed).
+    // Windows 11 builds (not mfplat.dll as older prototypes assumed). It does
+    // not exist at all on Windows 10 or pre-22H2 Windows 11. That is not a
+    // hard failure: the DirectShow source registered by DllRegisterServer
+    // (CLSID_PhoneCamDShowSource) works standalone on any Windows version —
+    // Zoom, OBS, classic Chromium camera pickers and OpenCV's DSHOW backend
+    // all discover it without any Frame Server session. Degrade to
+    // DirectShow-only instead of reporting the whole camera as broken.
     HMODULE mf = GetModuleHandleW(L"mfsensorgroup.dll");
     if (!mf) mf = LoadLibraryW(L"mfsensorgroup.dll");
-    if (!mf) return StoreError(HRESULT_FROM_WIN32(GetLastError()));
-    auto create = reinterpret_cast<MFCreateVirtualCameraFn>(GetProcAddress(mf, "MFCreateVirtualCamera"));
-    if (!create) return StoreError(HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND));
+    auto create = mf ? reinterpret_cast<MFCreateVirtualCameraFn>(
+        GetProcAddress(mf, "MFCreateVirtualCamera")) : nullptr;
+    if (!create) {
+        g_frameServerAvailable = false;
+        g_started = true; g_lastError = S_OK; g_lastStage = 0;
+        return PHONECAM_STATUS_OK;
+    }
     wchar_t sourceId[64]{}; StringFromGUID2(CLSID_PhoneCamMediaSource, sourceId, 64);
     HRESULT hr = create(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_Session,
                         MFVirtualCameraAccess_CurrentUser, L"PhoneCam Virtual Camera", sourceId,
@@ -176,13 +201,14 @@ PHONECAM_API int PhoneCam_StartVirtualCamera() {
     if (FAILED(hr)) { g_lastStage = 1; return StoreError(hr); }
     hr = g_virtualCamera->Start(nullptr);
     if (FAILED(hr)) { g_lastStage = 2; g_virtualCamera->Shutdown(); g_virtualCamera.Reset(); return StoreError(hr); }
+    g_frameServerAvailable = true;
     g_started = true; g_lastError = S_OK; g_lastStage = 0; return PHONECAM_STATUS_OK;
 }
 
 PHONECAM_API int PhoneCam_StopVirtualCamera() {
     if (!g_started) return PHONECAM_STATUS_OK;
     HRESULT hr = g_virtualCamera ? g_virtualCamera->Stop() : S_OK;
-    g_started = false; return StoreError(hr);
+    g_started = false; g_frameServerAvailable = false; return StoreError(hr);
 }
 PHONECAM_API int PhoneCam_DisposeVirtualCamera() {
     PhoneCam_StopVirtualCamera();
@@ -223,9 +249,16 @@ PHONECAM_API int PhoneCam_EnableTestPattern(int enable) {
     if (!g_initialized) return PHONECAM_STATUS_NOT_INITIALIZED;
     g_writer.SetTestPatternEnabled(enable != 0); return PHONECAM_STATUS_OK;
 }
+PHONECAM_API int PhoneCam_GetConfiguredFps() { return static_cast<int>(g_config.fps); }
 PHONECAM_API int PhoneCam_GetStatus() {
     if (!g_initialized) return PHONECAM_STATUS_NOT_INITIALIZED; return g_started ? 1 : 0;
 }
+PHONECAM_API int PhoneCam_IsFrameServerAvailable() { return g_frameServerAvailable ? 1 : 0; }
+// Whether the machine-wide COM registration (both Media Foundation and
+// DirectShow CLSIDs) exists. Lets the desktop app tell "driver not
+// installed yet" apart from "installed but Frame Server unavailable on this
+// Windows version" instead of a single opaque failure.
+PHONECAM_API int PhoneCam_IsRegistered() { return IsMachineRegistered() ? 1 : 0; }
 PHONECAM_API int64_t PhoneCam_GetLastHResult() { return static_cast<int64_t>(g_lastError.load()); }
 PHONECAM_API int PhoneCam_GetLastErrorStage() { return g_lastStage.load(); }
 PHONECAM_API uint64_t PhoneCam_GetPublishedFrameCount() { return g_writer.GetStats().publishedFrames; }

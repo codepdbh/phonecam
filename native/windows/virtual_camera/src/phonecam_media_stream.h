@@ -53,6 +53,16 @@ private:
                                   int64_t timestampHns,
                                   const PhoneCamVideoConfig& config,
                                   IMFSample** ppSample);
+    // Maps the broker's source-clock frame timestamps onto the QPC-based
+    // timeline Media Foundation expects, so real inter-frame spacing (not
+    // just "now" on every pull) reaches consumers. See phonecam_media_stream.cpp.
+    int64_t ComputeSampleTimestamp(bool realFrame, uint64_t frameIndex, uint64_t sourceTimestampUs);
+
+    std::mutex m_timelineMutex;
+    int64_t m_qpcBaseline = 0;
+    uint64_t m_sourceBaselineUs = 0;
+    uint64_t m_lastFrameIndexSeen = 0;
+    int64_t m_lastSampleTimestamp = 0;
 
     std::atomic<ULONG> m_refCount;
     std::mutex m_mutex;

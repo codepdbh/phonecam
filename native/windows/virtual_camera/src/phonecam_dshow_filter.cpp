@@ -608,10 +608,14 @@ void PhoneCamDShowPin::StopStreaming() {
 }
 
 void PhoneCamDShowPin::StreamingThreadWorker() {
-    auto frameDuration = std::chrono::milliseconds(33);
     std::vector<uint8_t> frameBuffer;
     std::vector<uint8_t> convertedBuffer;
     std::vector<uint8_t> rgb24Buffer;
+    const auto streamStart = std::chrono::steady_clock::now();
+    // Recomputed every iteration from the negotiated media type so pacing
+    // (both the inter-sample timestamps and the loop's own sleep) actually
+    // tracks whatever fps the consumer picked instead of a fixed 30.
+    uint32_t currentFps = 30;
 
     while (m_isStreaming) {
         auto start = std::chrono::steady_clock::now();
@@ -657,6 +661,7 @@ void PhoneCamDShowPin::StreamingThreadWorker() {
                     outputConfig.fps = videoInfo->AvgTimePerFrame > 0
                         ? static_cast<uint32_t>(10000000LL / videoInfo->AvgTimePerFrame) : 30;
                 }
+                currentFps = outputConfig.fps > 0 ? outputConfig.fps : 30;
                 const bool rgb24 = m_currentMediaType.subtype == MEDIASUBTYPE_RGB24;
                 if (m_currentMediaType.subtype == MEDIASUBTYPE_NV12)
                     outputConfig.format = PhoneCamPixelFormat::NV12;
@@ -706,8 +711,12 @@ void PhoneCamDShowPin::StreamingThreadWorker() {
                     pSample->SetActualDataLength((long)copySize);
                 }
 
-                REFERENCE_TIME rtStart = m_frameIndex++ * 333333LL;
-                REFERENCE_TIME rtEnd = rtStart + 333333LL;
+                const REFERENCE_TIME frameDurationHns = 10000000LL / currentFps;
+                const auto elapsedSinceStart = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - streamStart).count();
+                REFERENCE_TIME rtStart = elapsedSinceStart * 10; // us -> 100ns units
+                REFERENCE_TIME rtEnd = rtStart + frameDurationHns;
+                ++m_frameIndex;
                 pSample->SetTime(&rtStart, &rtEnd);
                 pSample->SetSyncPoint(TRUE);
 
@@ -716,6 +725,7 @@ void PhoneCamDShowPin::StreamingThreadWorker() {
             }
         }
 
+        const auto frameDuration = std::chrono::milliseconds(1000 / (currentFps > 0 ? currentFps : 30));
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
         if (elapsed < frameDuration) {
             std::this_thread::sleep_for(frameDuration - elapsed);
